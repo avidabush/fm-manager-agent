@@ -103,6 +103,8 @@ internal interface IAgentHost
     void Attention();
     /// <summary>Opens "Your terms" in the panel.</summary>
     void ShowTerms();
+    /// <summary>Saves a UI dump for troubleshooting (once something looks wrong).</summary>
+    void DumpUi(string reason);
     /// <summary>True while another duty is in the middle of something.</summary>
     bool OtherDutyBusy(AgentDuty me);
 }

@@ -41,6 +41,11 @@ internal sealed class FakeFm : IGame
     public readonly List<Job> Jobs = new();
     public int Selected;
     public float ScrollPos;
+    // FM27-like variations
+    public bool SplitDate;          // "TUE" and "6/9/2026" as two separate texts
+    public bool RowsClickable = true;
+    public bool NoScrollView;       // the list scrolls, but isn't a recognisable scroll view
+    public float HeaderShift;       // header texts don't line up with the cells
     public bool ConfirmOnSingleApply = true;
     public string Confirm;            // null | "all" | job team
     public const float RowH = 60, ListTop = 220, ListH = 780;
@@ -254,19 +259,25 @@ internal sealed class FakeFm : IGame
 
         // top bar
         Add(null, 12, 4, 36, 56, () => { var p = Page; Page = PreviousPage; PreviousPage = p; CareerMenuOpen = false; });
-        Add(Date.ToString("ddd", CultureInfo.InvariantCulture).ToUpperInvariant() + " " + Date.ToString("M/d/yyyy", CultureInfo.InvariantCulture), 1483, 22, 95, 18);
+        if (SplitDate)
+        {
+            Add(Date.ToString("ddd", CultureInfo.InvariantCulture).ToUpperInvariant(), 1483, 22, 30, 18);
+            Add(Date.ToString("M/d/yyyy", CultureInfo.InvariantCulture), 1517, 22, 62, 18);
+        }
+        else Add(Date.ToString("ddd", CultureInfo.InvariantCulture).ToUpperInvariant() + " " + Date.ToString("M/d/yyyy", CultureInfo.InvariantCulture), 1483, 22, 95, 18);
+        Add("11:00", 1592, 22, 40, 18);
         Button("Career", 490, 64, 70, 26, () => CareerMenuOpen = !CareerMenuOpen);
         Button("Player Database", 570, 64, 120, 26, () => { });
         if (CareerMenuOpen)
         {
             int i = 0;
-            foreach (var item in new[] { "Profile", "History", "Available Jobs", "Job Applications" })
+            foreach (var item in new[] { "Profile", "History", "Head Coach Vacancies", "Job Applications" })
             {
                 var captured = item;
                 Button(item, 490, 100 + i++ * 34, 200, 30, () =>
                 {
                     CareerMenuOpen = false;
-                    if (captured == "Available Jobs") { PreviousPage = Page; Page = "jobs"; }
+                    if (captured == "Head Coach Vacancies") { PreviousPage = Page; Page = "jobs"; }
                 });
             }
         }
@@ -285,13 +296,14 @@ internal sealed class FakeFm : IGame
     {
         Add($"{Jobs.Count(j => j.Security == "Available")} Available Jobs", 41, 147, 175, 24);
         Button("Apply for all jobs", 1660, 140, 128, 36, () => Confirm = "all");
-        float hy = 200;
-        Add("Current Head Coach", 90, hy, 105, 16); Add("Team", 329, hy, 30, 16); Add("Club Rating", 607, hy, 60, 16);
-        Add("Nation", 746, hy, 36, 16); Add("Position", 868, hy, 42, 16); Add("Form", 933, hy, 26, 16);
-        Add("Job Security", 1037, hy, 66, 16); Add("Finances", 1159, hy, 46, 16);
+        float hy = 200, hs = HeaderShift;
+        Add("Current Head Coach", 90 + hs, hy, 105, 16); Add("Team", 329 + hs, hy, 30, 16); Add("Club Rating", 607 + hs, hy, 60, 16);
+        Add("Nation", 746 + hs, hy, 36, 16); Add("Position", 868 + hs, hy, 42, 16); Add("Form", 933 + hs, hy, 26, 16);
+        Add("Job Security", 1037 + hs, hy, 66, 16); Add("Finances", 1159 + hs, hy, 46, 16);
 
         var scroll = Add(null, 42, ListTop, 1255, ListH);
-        scroll.IsScroll = true; scroll.Type = "ScrollView";
+        if (!NoScrollView) { scroll.IsScroll = true; scroll.Type = "ScrollView"; }
+        else scroll.Type = "StreamedTable";
         scroll.ScrollValue = ScrollPos; scroll.ScrollLow = 0; scroll.ScrollHigh = MaxScroll; scroll.CanScroll = MaxScroll > 0;
         _parents.Push(scroll.Id);
         for (int i = 0; i < Jobs.Count; i++)
@@ -300,8 +312,8 @@ internal sealed class FakeFm : IGame
             if (y + RowH < ListTop - RowH || y > ListTop + ListH + RowH) continue; // virtualised list
             var j = Jobs[i];
             int idx = i;
-            var row = Add(null, 42, y, 1255, RowH - 2, () => Selected = idx);
-            row.Type = "TableRowNavigatable";
+            var row = RowsClickable ? Add(null, 42, y, 1255, RowH - 2, () => Selected = idx) : Add(null, 42, y, 1255, RowH - 2);
+            row.Type = RowsClickable ? "TableRowNavigatable" : "VisualElement";
             _parents.Push(row.Id);
             Add(null, 55, y + 20, 20, 20, () => Selected = idx);
             Add(j.Coach, 90, y + 20, 80, 18);
@@ -323,9 +335,11 @@ internal sealed class FakeFm : IGame
         {
             var j = Jobs[Selected];
             Add(j.Team, 1385, 228, j.Team.Length * 11, 26);
-            Add("Head Coach Position", 1480, 228, 200, 26);
+            Add("Head Coach Position", 1385 + j.Team.Length * 11 + 8, 228, 200, 26);
             Add("Reputation", 1330, 383, 70, 16);
             Add(j.Rating, 1359, 403, 60, 18);
+            Add("Finances", 1330, 442, 60, 16);
+            Add(j.Finances, 1330, 462, 40, 18);
             Button("Declare Interest In Job", 1562, 983, 168, 36, () => { });
             Button("Apply For Job", 1748, 983, 110, 36, () =>
             {

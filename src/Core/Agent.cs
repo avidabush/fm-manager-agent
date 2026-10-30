@@ -94,12 +94,16 @@ internal sealed class Agent : IAgentHost
     public void ShowTerms() => Panel.ShowTerms();
     public bool OtherDutyBusy(AgentDuty me) => Duties.Any(d => d != me && d.IsRunning);
 
-    public void DumpUi()
+    public void DumpUi() => DumpUi(null);
+
+    public void DumpUi(string reason)
     {
         try
         {
             var path = UiDump.Write(OwnElementIds);
-            AgentLog.Info($"UI dump written: {System.IO.Path.GetFileName(path)} (in BepInEx\\config\\ManagerAgent\\dumps)");
+            var name = System.IO.Path.GetFileName(path);
+            if (reason == null) AgentLog.Info($"UI dump written: {name} (in BepInEx\\config\\ManagerAgent\\dumps)");
+            else AgentLog.Warn($"Saved {name} for troubleshooting — {reason}. It's in BepInEx\\config\\ManagerAgent\\dumps.");
         }
         catch (Exception ex)
         {

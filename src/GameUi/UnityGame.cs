@@ -70,6 +70,7 @@ internal sealed class UnityGame : IGame
         var methods = Methods;
         if (attempt < 0 || attempt >= methods.Count) { how = "no more ways to press"; return false; }
         if (!Ui.IsAttached(el)) { how = "element gone"; return false; }
+        if (methods[attempt] == ClickStrategy.Mouse) _a.Panel.Uncover(el);
         var ok = _a.Clicker.TryPress(methods[attempt], el, Ui.RootOf(el), out how);
         how = methods[attempt].ToString().ToLowerInvariant() + (ok ? "" : " (" + how + ")");
         if (ok) Rescan();
@@ -131,6 +132,7 @@ internal sealed class UnityGame : IGame
             if (Reflect.TrySet(scroller, "value", nv)) { how = "scrollbar"; Rescan(); return true; }
         }
         int notches = (int)Math.Ceiling(Math.Abs(pixels) / 100f) * Math.Sign(pixels);
+        _a.Panel.Uncover(el);
         if (_a.Clicker.Wheel(el, Ui.RootOf(el), notches)) { how = "mouse wheel"; Rescan(); return true; }
         how = "can't scroll";
         return false;

@@ -75,6 +75,8 @@ internal sealed class AgentSettings
         t.ColSecurity = B("ColumnSecurity", t.ColSecurity, "Jobs table column");
         t.ColFinances = B("ColumnFinances", t.ColFinances, "Jobs table column");
         t.Ratings = B("ClubRatings", t.Ratings, "Club ratings from lowest to highest");
+        t.SecurityWords = B("JobSecurityWords", t.SecurityWords, "Job Security values other than the vacancy word");
+        t.FinanceWords = B("FinanceWords", t.FinanceWords, "Finances column values");
         t.CareerMenu = B("CareerMenu", t.CareerMenu, "Top menu that contains the jobs page");
         t.JobsMenuItems = B("JobsMenuItems", t.JobsMenuItems, "Menu entry that opens the jobs page");
         t.EnterNegotiations = B("EnterNegotiations", t.EnterNegotiations, "Button on a job offer message");

@@ -23,7 +23,8 @@ internal static class AgentTests
         public GameText Text { get; } = new();
         public AgentData Data { get; }
         public List<AgentDuty> Duties = new();
-        public int Attentions, TermsShown;
+        public int Attentions, TermsShown, Dumps;
+        public void DumpUi(string reason) { Dumps++; Console.WriteLine("      (dump requested: " + reason + ")"); }
         public Host(FakeFm fm, string name)
         {
             Fm = fm;
@@ -318,7 +319,7 @@ internal static class AgentTests
             h.Data.Jobs.Nations = new List<string> { "LTU" };
             jh.SetEnabled(true);
             bool done = h.Run(() => fm.Jobs.Any(j => j.Applied) && !jh.IsRunning, 200);
-            Check("Auto-visit: opens Career → Available Jobs itself and applies", done && fm.Jobs.Single(j => j.Applied).Team == "Hegelmann", string.Join(",", fm.Jobs.Where(j => j.Applied).Select(j => j.Team)));
+            Check("Auto-visit: opens Career → Head Coach Vacancies itself and applies", done && fm.Jobs.Single(j => j.Applied).Team == "Hegelmann", string.Join(",", fm.Jobs.Where(j => j.Applied).Select(j => j.Team)));
             h.Run(() => fm.Page == "portal", 5);
             Check("…then goes back where you were", fm.Page == "portal", fm.Page);
             int before = fm.Presses;
@@ -328,6 +329,80 @@ internal static class AgentTests
             fm.Jobs.Add(new FakeFm.Job { Team = "Žalgiris", League = "A Lyga", Rating = "National", Nation = "LTU" });
             bool again = h.Run(() => fm.Jobs.Last().Applied, 200);
             Check("Checks again a week later and applies to the new vacancy", again);
+        }
+        // Your setup from the FM27 test: any nation, national teams skipped, check every 3 days —
+        // under each way FM27 might differ from the simulator's defaults.
+        var clubVacancies = new[] { "Egersund", "Stjarnan", "Hapoel Acre", "Hapoel Kfar-Saba", "Forest Green", "Gateshead", "Woking", "Hegelmann", "Hampton & Richmond", "Slough" }.OrderBy(x => x).ToList();
+        foreach (var (label, tweak) in new (string, Action<FakeFm>)[]
+                 {
+                     ("as simulated", f => { }),
+                     ("headers not lined up with cells", f => f.HeaderShift = 250),
+                     ("rows not clickable, no scroll view", f => { f.RowsClickable = false; f.NoScrollView = true; }),
+                     ("date shown as two texts", f => f.SplitDate = true),
+                     ("only real mouse clicks work", f => f.WorkingMethod = 2),
+                 })
+        {
+            var fm = FakeFm.WithJobs();
+            fm.Page = "portal";
+            tweak(fm);
+            fm.Tick();
+            var h = new Host(fm, "user-" + label.Replace(' ', '-').Replace(',', '_'));
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            h.Data.Jobs.CheckEveryDays = 3;
+            h.Data.Jobs.IncludeNationalTeams = false;
+            jh.SetEnabled(true);
+            bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 400);
+            var applied = fm.Jobs.Where(j => j.Applied).Select(j => j.Team).OrderBy(x => x).ToList();
+            Check($"Your settings ({label}): opens the page itself and applies to all 10 club vacancies, no national teams",
+                done && applied.SequenceEqual(clubVacancies) && fm.Page == "portal", $"{string.Join(", ", applied)} | page={fm.Page} | {jh.LastSummary}");
+            Check($"Your settings ({label}): reads the date, next check in 3 days, nothing looked odd",
+                jh.DateKnown && jh.DaysUntilNextCheck == 3 && h.Dumps == 0, $"date={jh.Date.Raw} next={jh.DaysUntilNextCheck} dumps={h.Dumps}");
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.Jobs.RemoveAll(j => j.Finances == "-"); // no national team vacancies today
+            fm.Tick();
+            var h = new Host(fm, "jobs-all-match");
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            jh.SetEnabled(true);
+            bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 200);
+            Check("Every open job matches your filters → uses \"Apply for all jobs\"", done && fm.Events.Contains("applied all") && jh.LastSummary.Contains("Apply for all"), jh.LastSummary);
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.Tick();
+            var h = new Host(fm, "jobs-not-all");
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            jh.SetEnabled(true);
+            h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 400);
+            Check("National-team vacancies on the list but you skip them → doesn't use \"Apply for all jobs\"",
+                !fm.Events.Contains("applied all") && fm.Jobs.Count(j => j.Applied) == 10 && !fm.Jobs.Any(j => j.Applied && j.Finances == "-"), jh.LastSummary);
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.Page = "portal";
+            fm.Tick();
+            var h = new Host(fm, "jobs-legacy");
+            h.Data.Jobs.LastCheckDate = "checked"; // written by 0.3.0 when it couldn't read the date
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            h.Data.Jobs.Enabled = true;
+            bool went = h.Run(() => fm.Page == "jobs" || fm.Jobs.Any(j => j.Applied), 60);
+            Check("Settings saved by 0.3.0 (date unreadable) → checks straight away", went);
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.HeaderShift = 250;
+            fm.Tick();
+            var rows = JobsPage.Read(fm.Screen, new GameText(), out _, out _, out _, out _);
+            var eg = rows.FirstOrDefault(r => r.Team == "Egersund");
+            Check("Headers not lined up: still reads club, league, rating, nation and vacancy correctly",
+                rows.Count >= 12 && eg != null && eg.League == "First Division" && eg.Nation == "NOR" && eg.IsVacancy && eg.Rating == ClubRating.National
+                && rows.All(r => r.Team != "Available") && rows.Count(r => r.IsVacancy) == rows.Count(r => fm.Jobs.Any(j => j.Team == r.Team && j.Security == "Available")),
+                string.Join(" ; ", rows.Take(4).Select(r => r.Debug())));
         }
         {
             var fm = FakeFm.WithJobs();
@@ -345,9 +420,9 @@ internal static class AgentTests
                 h.Run(() => false, 0.5);
             }
             Click("Career");
-            Click("Available Jobs");
+            Click("Head Coach Vacancies");
             h.Run(() => false, 1);
-            Check("Learns the menu path when you open the jobs page", h.Data.Jobs.MenuParentText == "Career" && h.Data.Jobs.MenuItemText == "Available Jobs",
+            Check("Learns the menu path when you open the jobs page", h.Data.Jobs.MenuParentText == "Career" && h.Data.Jobs.MenuItemText == "Head Coach Vacancies",
                 h.Data.Jobs.MenuParentText + " → " + h.Data.Jobs.MenuItemText);
         }
     }

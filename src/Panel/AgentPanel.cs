@@ -27,6 +27,7 @@ internal sealed class AgentPanel
     private bool _visible, _open, _tabHover;
     private bool? _appliedVisible, _appliedOpen;
     private bool _needTabPosition = true;
+    private double _uncoverUntil;
     private Press _press;
     private float _tabLeft = -1, _tabTop = -1;   // last position we set (parent-local), valid before layout catches up
 
@@ -57,12 +58,13 @@ internal sealed class AgentPanel
         }
         if (_tab == null) return;
 
-        if (_appliedVisible != _visible || _appliedOpen != _open)
+        bool showing = _visible && now >= _uncoverUntil;
+        if (_appliedVisible != showing || _appliedOpen != _open)
         {
-            _appliedVisible = _visible;
+            _appliedVisible = showing;
             _appliedOpen = _open;
-            S.Shown(_tab, _visible);
-            S.Shown(_drop, _visible && _open);
+            S.Shown(_tab, showing);
+            S.Shown(_drop, showing && _open);
             _placeKey = null;
         }
         if (_marks.Count > 0 && now > _marksUntil) ClearMarks();
@@ -332,6 +334,22 @@ internal sealed class AgentPanel
     private static float Clamp(float v, float min, float max) => max < min ? min : Math.Max(min, Math.Min(max, v));
 
     // ================================================================== show / hide
+
+    /// <summary>
+    /// The agent is about to click a game element with the real mouse: if the tab or panel covers it,
+    /// hide them for a moment so the click reaches the game.
+    /// </summary>
+    public void Uncover(VisualElement target)
+    {
+        if (!_visible || _tab == null || !Ui.TryBounds(target, out var x, out var y, out var w, out var h)) return;
+        bool Over(VisualElement v) => Ui.TryBounds(v, out var vx, out var vy, out var vw, out var vh) &&
+                                      x < vx + vw + 4 && x + w > vx - 4 && y < vy + vh + 4 && y + h > vy - 4;
+        if (!Over(_tab) && !(_open && Over(_drop))) return;
+        _uncoverUntil = Clock.Now + 1.2;
+        S.Shown(_tab, false);
+        S.Shown(_drop, false);
+        _appliedVisible = false;
+    }
 
     public void Toggle()
     {
@@ -611,8 +629,8 @@ internal sealed class AgentPanel
         {
             var days = j.DaysUntilNextCheck;
             status = !_a.Data.Jobs.AutoVisit ? "On — I apply whenever you open the jobs page."
-                : days == 0 ? "On — checking jobs as soon as you're idle."
-                : days == null ? "On — I'll check jobs regularly."
+                : !j.DateKnown ? $"On — checking jobs every {JobHunter.FallbackMinutes:0} minutes (can't read the game date)."
+                : days == 0 ? $"On — checking jobs once you've been idle for {JobHunter.IdleBeforeVisit:0} seconds."
                 : $"On — next check in {days} day{(days == 1 ? "" : "s")}.";
         }
         Line(card, status, 0.92f);
@@ -691,13 +709,13 @@ internal sealed class AgentPanel
             Chip(r3, nat, picked, () => { if (picked) j.Nations.Remove(captured); else j.Nations.Add(captured); Save(); });
         }
 
-        Line(_drop, "Open the jobs page for me", 0.84f, Palette.Muted, 6, 4);
+        Line(_drop, "Open the jobs page and apply for me", 0.84f, Palette.Muted, 6, 4);
         var r4 = Row(_drop);
         Chip(r4, "Off (only when I open it)", !j.AutoVisit, () => { j.AutoVisit = false; Save(); });
-        foreach (var d in new[] { 3, 7, 14 })
+        foreach (var d in new[] { 1, 3, 7, 14 })
         {
             var captured = d;
-            Chip(r4, $"Every {d} days", j.AutoVisit && j.CheckEveryDays == d, () => { j.AutoVisit = true; j.CheckEveryDays = captured; Save(); });
+            Chip(r4, d == 1 ? "Every day" : $"Every {d} days", j.AutoVisit && j.CheckEveryDays == d, () => { j.AutoVisit = true; j.CheckEveryDays = captured; Save(); });
         }
         if (j.AutoVisit)
         {
@@ -705,6 +723,7 @@ internal sealed class AgentPanel
             Chip(r5, j.ReturnAfterCheck ? "Go back afterwards: on" : "Go back afterwards: off", j.ReturnAfterCheck, () => { j.ReturnAfterCheck = !j.ReturnAfterCheck; Save(); });
         }
 
+        Line(_drop, "If every open job matches these filters I use \"Apply for all jobs\"; otherwise I apply to the matching ones one by one.", 0.74f, Palette.Faint, 6, 2);
         if (j.MenuItemText.Length > 0)
             Line(_drop, $"Way to the jobs page: {(j.MenuParentText.Length > 0 ? j.MenuParentText + " → " : "")}{j.MenuItemText}", 0.76f, Palette.Faint, 6, 2);
         var r6 = Row(_drop);

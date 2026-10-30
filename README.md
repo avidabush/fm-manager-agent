@@ -24,16 +24,22 @@ Keep `ManagerAgent-Setup.exe`. Run it again to update, repair (for example after
 
 ## 2. Job hunting
 
-Open the Agent panel. In the **Job hunting** card, press **Turn on**.
+Open the Agent panel. In the **Job hunting** card, press **Turn on**. While it's on:
 
-- While it's on, every time the **Available Jobs** page is open, the agent applies for each vacancy that matches your **Filters**:
+- **The agent applies by itself.** Every day, or every 3, 7 or 14 in-game days (your choice in **Filters**), once you've left the game alone for a few seconds, it:
+  1. opens Career → Head Coach Vacancies;
+  2. reads the whole list;
+  3. applies;
+  4. goes back to where you were.
+
+  It also runs whenever you open that page yourself.
+- **Filters** decide which jobs count:
   - minimum club rating;
   - national teams yes or no;
-  - which nations (the nations appear once you've opened the jobs page).
-
-  Jobs you already applied for are skipped. If your filters allow everything, it simply uses the game's own *Apply for all jobs*.
-- **Open the jobs page for me** (Filters): every 3, 7 or 14 in-game days, when you're idle, the agent opens the page itself, applies, and goes back.
-  - It learns the way there from you: open the jobs page yourself once and it remembers which menu you used.
+  - which nations (the list fills in once the agent has seen the jobs page).
+- **How it applies:** if every open job matches your filters, it presses the game's own **Apply for all jobs**. Otherwise it applies only to the matching ones, one by one, so filtered-out jobs aren't applied for.
+- **Already applied:** jobs you've already applied for are skipped.
+- **If it can't read the in-game date,** it checks every 15 minutes of play instead and says so in the panel.
 - Press **Turn off** when you're happy where you are. Nothing is applied for while it's off.
 
 ## 3. Your terms

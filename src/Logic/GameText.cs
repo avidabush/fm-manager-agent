@@ -21,9 +21,11 @@ internal sealed class GameText
     public string ColSecurity = "Job Security";
     public string ColFinances = "Finances";
     public string Ratings = "Local|Regional|National|Continental|Worldwide";
+    public string SecurityWords = "Secure|Very Secure|Insecure|Very Insecure|Unstable|Stable|Under Threat|Safe|Vulnerable";
+    public string FinanceWords = "Okay|Rich|Very Rich|Secure|Insecure|Poor|Comfortable|Stable|Healthy|Precarious|In Debt|Good|Excellent|Bad|Struggling";
     // Navigation
     public string CareerMenu = "Career";
-    public string JobsMenuItems = "Available Jobs|Jobs|Job Centre|Job Vacancies|Vacancies";
+    public string JobsMenuItems = "Head Coach Vacancies|Manager Vacancies|Available Jobs|Job Vacancies|Vacancies|Job Centre|Jobs";
     // Offer message
     public string EnterNegotiations = "Enter Contract Negotiations";
     public string RejectOffer = "Reject Offer";

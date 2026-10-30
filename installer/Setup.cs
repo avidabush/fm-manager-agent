@@ -92,7 +92,7 @@ namespace ManagerAgentSetup
 
     internal static class SetupInfo
     {
-        public const string Version = "0.3.0";
+        public const string Version = "0.3.1";
         public const string BepInExBuildsPage = "https://builds.bepinex.dev/projects/bepinex_be";
     }
 

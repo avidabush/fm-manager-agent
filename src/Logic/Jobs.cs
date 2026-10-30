@@ -16,6 +16,7 @@ internal sealed class JobRow
     public float Top, BottomY;
 
     public string Key => (Team + "|" + League).ToLowerInvariant();
+    public string Debug() => $"{Team} | {League} | {Rating} | {Nation} | {Security}{(IsVacancy ? " (open)" : "")} | {Finances}{(IsNationalTeam ? " | national" : "")}";
     public string Describe() => Team + (League.Length > 1 ? " (" + League + (Nation.Length > 0 ? ", " + Nation : "") + ")" : Nation.Length > 0 ? " (" + Nation + ")" : "");
 }
 
@@ -71,7 +72,32 @@ internal static class JobsPage
         return ClubRating.Unknown;
     }
 
-    /// <summary>The table's rows currently on screen (top to bottom), plus the area they scroll in.</summary>
+    private enum Kind { Dash, Rating, Vacancy, Security, Finance, Ordinal, Caps, Other }
+
+    private static readonly Regex Ordinal = new(@"^\d+(st|nd|rd|th|e|º|°|\.)?$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex Caps = new(@"^[A-ZÀ-Ý]{2,4}$", RegexOptions.Compiled);
+
+    private static Kind Classify(string text, GameText t)
+    {
+        var x = Ui.Clean(text);
+        if (x == "-" || x == "–" || x == "—") return Kind.Dash;
+        if (ParseRating(x, t) != ClubRating.Unknown) return Kind.Rating;
+        if (ScreenModel.Split(t.Vacancy).Any(v => ScreenModel.Eq(x, v))) return Kind.Vacancy;
+        if (ScreenModel.Split(t.SecurityWords).Any(v => ScreenModel.Eq(x, v))) return Kind.Security;
+        if (ScreenModel.Split(t.FinanceWords).Any(v => ScreenModel.Eq(x, v))) return Kind.Finance;
+        if (Ordinal.IsMatch(x)) return Kind.Ordinal;
+        if (Caps.IsMatch(x)) return Kind.Caps;
+        return Kind.Other;
+    }
+
+    /// <summary>
+    /// The table's rows currently on screen (top to bottom), plus the area they scroll in.
+    ///
+    /// Values are recognised by what they are, not only by which header they sit under: every row
+    /// has exactly one club-rating word (the anchor); "Available" only appears for open jobs; the nation
+    /// is the short capitals code right of the rating; club and league are the texts left of it.
+    /// This keeps working when header positions don't line up exactly with the cells.
+    /// </summary>
     public static List<JobRow> Read(ScreenModel s, GameText t, out UiNode scroll, out float tableLeft, out float tableRight, out float headerBottom)
     {
         scroll = null;
@@ -95,19 +121,21 @@ internal static class JobsPage
         tableRight = headers[^1].n.Right + 140;
         headerBottom = headers.Max(h => h.n.Bottom);
         float tl = tableLeft, tr = tableRight, hb = headerBottom;
+        var tableWidth = tr - tl;
+        var teamHeader = headers.First(h => h.col == "team").n;
 
-        string ColumnAt(float x)
+        // Row anchors: one club-rating word per row (prefer the ones under the Club Rating header;
+        // otherwise the column of rating words — ignoring strays such as the job panel's "Reputation").
+        var ratingWords = s.Texts.Where(n => n.CY > hb + 4 && n.CX > tl && n.CX < tr && ParseRating(n.Text, t) != ClubRating.Unknown).ToList();
+        var underHeader = ratingWords.Where(n => n.CX >= rating.X - 40 && n.X <= rating.Right + 160).ToList();
+        var anchors = underHeader.Count > 0 ? underHeader : ratingWords;
+        if (anchors.Count > 2)
         {
-            string col = null;
-            foreach (var (c, n) in headers)
-                if (x >= n.X - 12) col = c;
-            return col;
+            var xs = anchors.Select(n => n.X).OrderBy(x => x).ToList();
+            float median = xs[xs.Count / 2];
+            anchors = anchors.Where(n => Math.Abs(n.X - median) < 150).ToList();
         }
-
-        // Each row has exactly one club-rating word: use those as row anchors.
-        var anchors = s.Texts.Where(n => n.CY > hb + 4 && n.CX > tl && n.CX < tr && ParseRating(n.Text, t) != ClubRating.Unknown)
-            .Where(n => ColumnAt(n.CX) == "rating")
-            .OrderBy(n => n.CY).ToList();
+        anchors = anchors.OrderBy(n => n.CY).ToList();
         if (anchors.Count == 0) return rows;
 
         float pitch = 60;
@@ -117,32 +145,59 @@ internal static class JobsPage
             if (diffs.Count > 0) pitch = diffs[diffs.Count / 2];
         }
 
-        var tableWidth = tr - tl;
+        UiNode RowElement(UiNode a) => s.Nodes.Where(n => n.Clickable && n.Contains(a.CX, a.CY) && n.W >= tableWidth * 0.5f && n.H < pitch * 1.8f)
+            .OrderBy(n => n.W * n.H).FirstOrDefault();
+
+        // The rows' own edges are more reliable than the headers' when the rows are real elements.
+        var rowEls = anchors.Select(RowElement).Where(n => n != null).ToList();
+        if (rowEls.Count > 0)
+        {
+            tableLeft = tl = Math.Min(tl, rowEls.Min(n => n.X));
+            tableRight = tr = rowEls.Max(n => n.Right);
+        }
+
+        float lastBottom = float.MinValue;
         foreach (var a in anchors)
         {
-            // Prefer the real row element (a wide clickable around the anchor).
-            var rowEl = s.Nodes.Where(n => n.Clickable && n.Contains(a.CX, a.CY) && n.W >= tableWidth * 0.5f && n.H < pitch * 1.8f)
-                .OrderBy(n => n.W * n.H).FirstOrDefault();
+            if (a.CY < lastBottom - 2) continue; // second rating word inside the same row
+            var rowEl = RowElement(a);
             float top = rowEl?.Y ?? a.CY - pitch / 2, bottom = rowEl?.Bottom ?? a.CY + pitch / 2;
+            lastBottom = bottom;
 
             var r = new JobRow { Top = top, BottomY = bottom, Rating = ParseRating(a.Text, t) };
-            var cells = s.TextsInBand(top + 1, bottom - 1, tl, tr).OrderBy(n => n.Y).ThenBy(n => n.X).ToList();
-            var teamTexts = new List<string>();
-            foreach (var c in cells)
+            var cells = s.TextsInBand(top + 1, bottom - 1, tl, tr).Where(c => c.Id != a.Id).ToList();
+
+            // Left of the rating: coach, club, league.
+            var left = cells.Where(c => c.CX < a.X).Select(c => (c, k: Classify(c.Text, t))).ToList();
+            var teamSide = left.Where(x => x.c.X >= teamHeader.X - 20).ToList();
+            if (!teamSide.Any(x => x.k == Kind.Other))
             {
-                switch (ColumnAt(c.CX))
+                // Header doesn't line up: take the right-most column of texts left of the rating.
+                var others = left.Where(x => x.k is Kind.Other or Kind.Caps or Kind.Dash).ToList();
+                if (others.Count > 0)
                 {
-                    case "coach": if (r.Coach.Length == 0) r.Coach = c.Text; break;
-                    case "team": teamTexts.Add(c.Text); break;
-                    case "nation": if (r.Nation.Length == 0) r.Nation = c.Text; break;
-                    case "position": if (r.Position.Length == 0) r.Position = c.Text; break;
-                    case "security": if (r.Security.Length == 0) r.Security = c.Text; break;
-                    case "finances": if (r.Finances.Length == 0) r.Finances = c.Text; break;
+                    float maxX = others.Max(x => x.c.X);
+                    teamSide = others.Where(x => x.c.X >= maxX - 80).ToList();
                 }
             }
-            r.Team = teamTexts.ElementAtOrDefault(0) ?? "";
-            r.League = teamTexts.ElementAtOrDefault(1) ?? "";
-            r.IsVacancy = ScreenModel.Split(t.Vacancy).Any(v => ScreenModel.Eq(r.Security, v));
+            var teamCol = teamSide.OrderBy(x => x.c.Y).ThenBy(x => x.c.X).ToList();
+            var teamCell = teamCol.FirstOrDefault(x => x.k is Kind.Other or Kind.Caps);
+            r.Team = teamCell.c?.Text ?? "";
+            var leagueCell = teamCol.FirstOrDefault(x => teamCell.c != null && x.c.Id != teamCell.c.Id && x.c.Y >= teamCell.c.Y);
+            r.League = leagueCell.c?.Text ?? "";
+            var coach = left.Where(x => (teamCell.c == null || x.c.X < teamCell.c.X - 30) && x.k is Kind.Other or Kind.Dash).OrderBy(x => x.c.X).FirstOrDefault();
+            r.Coach = coach.c?.Text ?? "";
+
+            // Right of the rating: nation, position, form, job security, finances.
+            var right = cells.Where(c => c.X >= a.Right - 2).OrderBy(c => c.X).Select(c => (c, k: Classify(c.Text, t))).ToList();
+            r.Nation = right.FirstOrDefault(x => x.k == Kind.Caps).c?.Text ?? "";
+            r.Position = right.FirstOrDefault(x => x.k == Kind.Ordinal).c?.Text ?? "";
+            var vac = right.FirstOrDefault(x => x.k == Kind.Vacancy);
+            var sec = vac.c != null ? vac : right.FirstOrDefault(x => x.k == Kind.Security);
+            r.Security = sec.c?.Text ?? "";
+            var fin = right.Where(x => sec.c == null || x.c.X > sec.c.X + 10).LastOrDefault(x => x.k is Kind.Finance or Kind.Security or Kind.Dash);
+            r.Finances = fin.c?.Text ?? "";
+            r.IsVacancy = vac.c != null;
             r.IsNationalTeam = IsNational(r);
 
             // What to press: the row itself, else a small control at its left (the radio), else the rating text.
@@ -156,6 +211,14 @@ internal static class JobsPage
             .OrderBy(n => n.W * n.H).FirstOrDefault();
         return rows;
     }
+
+    /// <summary>How many "Available" words are in the table (to double-check the reading).</summary>
+    public static int VacancyWordsOnScreen(ScreenModel s, GameText t, float tableLeft, float tableRight, float headerBottom) =>
+        s.Texts.Count(n => n.CY > headerBottom + 4 && n.CX > tableLeft && n.CX < tableRight && ScreenModel.Split(t.Vacancy).Any(v => ScreenModel.Eq(n.Text, v)));
+
+    /// <summary>Text of the job details panel (right of the table), used to see that a row got selected.</summary>
+    public static string SidePanelKey(ScreenModel s, float tableRight, float headerBottom) =>
+        string.Join("|", s.Texts.Where(n => n.X > tableRight - 40 && n.Y > headerBottom - 60 && n.Y < headerBottom + 260).OrderBy(n => n.Y).Select(n => n.Text));
 
     private static readonly Regex NationalHint = new(@"\bU-?\d{2}s?\b|Quals|Qualif|Nations|World Cup|Ch'ship|Championship Qual", RegexOptions.IgnoreCase);
 

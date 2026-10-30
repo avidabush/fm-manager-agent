@@ -8,7 +8,7 @@ internal static class Palette
     // Built from fields (not the constructor), which every Unity build is guaranteed to have.
     private static Color C(float r, float g, float b, float a) => new Color { r = r, g = g, b = b, a = a };
 
-    public static readonly Color Bg = C(0.067f, 0.078f, 0.102f, 0.97f);
+    public static readonly Color Bg = C(0.067f, 0.078f, 0.102f, 1f);
     public static readonly Color Card = C(0.106f, 0.122f, 0.157f, 1f);
     public static readonly Color Line = C(0.212f, 0.239f, 0.298f, 1f);
     public static readonly Color Text = C(0.925f, 0.933f, 0.949f, 1f);
