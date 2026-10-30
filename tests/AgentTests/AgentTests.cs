@@ -559,6 +559,34 @@ internal static class AgentTests
             Check("List-style salary: reads the club max from the list", n.ClubMax == 1300, $"max={n.ClubMax}");
             Check("List-style salary: reaches a deal", n.Choice?.Title == "Deal ready" && fm.Offer.Wage >= 1100, $"{n.Choice?.Title} {fm.Offer}");
         }
+        // FM27 (from your screenshots): the salary is always a box showing "725"; clicking it opens a list
+        // of set amounts ending at the club's maximum.
+        foreach (var (label, tweak) in new (string, Action<FakeFm>)[]
+                 {
+                     ("as in your screenshots", f => { }),
+                     ("its value can't be set directly (types after clicking)", f => f.FieldSettable = false),
+                     ("a long list that scrolls", f => f.LongSalaryList = true),
+                     ("only real mouse clicks work", f => f.WorkingMethod = 2),
+                 })
+        {
+            var (fm, h, n) = Contract("fm27-" + label.Split(' ')[0] + label.Length, f => { f.SalaryMode = "fm27"; f.C.Max = 2100; f.C.WalkAway = 1600; tweak(f); },
+                d => SetRange(d, 900, 1800));
+            var list = fm.Fm27SalaryList();
+            n.Start();
+            h.Run(() => n.Choice != null, 600);
+            var stray = fm.Events.Where(e => e.StartsWith("stray")).ToList();
+            Check($"FM27 salary box ({label}): club maximum read from the list ($2,100)", n.ClubMax == 2100, $"max={n.ClubMax} list={list.Count} ending {list.Last()}");
+            Check($"FM27 salary box ({label}): reaches a deal, list closed, no keys sent blind",
+                n.Choice?.Title == "Deal ready" && fm.Offer.Wage >= 1400 && fm.Offer.Wage <= 1800 && fm.Popup == null && stray.Count == 0,
+                $"{n.Choice?.Title} {fm.Offer} popup={fm.Popup} {string.Join(",", stray)}");
+        }
+        {
+            var (fm, h, n) = Contract("fm27-above", f => { f.SalaryMode = "fm27"; f.C.Max = 2100; f.C.WalkAway = 2000; }, d => SetRange(d, 2500, 3000));
+            n.Start();
+            h.Run(() => n.Choice != null, 300);
+            Check("FM27 salary box: your range above the club's $2,100 → alerts you, offer put back", n.Choice?.Title == "Your range is above this club's maximum" && fm.Offer.Wage == fm.C.Initial && fm.Popup == null,
+                $"{n.Choice?.Title} {fm.Offer} popup={fm.Popup}");
+        }
         {
             var (fm, h, n) = Contract("neg4", f => { f.SalaryMode = "buttons"; f.C.Max = 1500; f.C.WalkAway = 1000; }, d => SetRange(d, 850, 1100));
             n.Start();

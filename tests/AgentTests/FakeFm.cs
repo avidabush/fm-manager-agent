@@ -70,7 +70,9 @@ internal sealed class FakeFm : IGame
     public int Suggestions;
     public bool TalksEnded, Signed;
     public string Chat = "Here is our initial offer:";
-    public string SalaryMode = "field";   // field | list | buttons
+    public string SalaryMode = "field";   // field | list | buttons | fm27 (always a type-in box; clicking it also opens a list)
+    public bool LongSalaryList;           // fm27: the list is longer than its box and scrolls
+    public float SalaryListScroll;
     public bool ClampToMax = true;
     public bool Editing;
     public string FieldText;
@@ -128,18 +130,24 @@ internal sealed class FakeFm : IGame
     public bool SetField(UiNode field, string text, out string how)
     {
         how = "field value";
-        if (!FieldSettable || !Editing) return false;
+        if (!FieldSettable || (!Editing && SalaryMode != "fm27")) return false;
         CommitSalary(text);
+        if (SalaryMode == "fm27" && Popup == "salary") Popup = null; // leaving the box closes its list
         Rebuild();
         return true;
     }
 
     public bool Type(string text, bool selectAllFirst, bool pressEnter)
     {
-        if (KeyboardWorks && Editing)
+        if (!Editing) { Events.Add("stray typing"); return true; }  // keys sent with nothing focused
+        if (KeyboardWorks)
         {
             FieldText = selectAllFirst ? text : FieldText + text;
-            if (pressEnter) CommitSalary(FieldText);
+            if (pressEnter)
+            {
+                CommitSalary(FieldText);
+                if (SalaryMode == "fm27") Editing = true; // FM27 keeps the box focused (and its list open)
+            }
             Rebuild();
         }
         return true;
@@ -148,7 +156,11 @@ internal sealed class FakeFm : IGame
     public bool Key(GameKey key)
     {
         if (key == GameKey.Escape) { Popup = null; Editing = false; }
-        if (key == GameKey.Enter && Editing) CommitSalary(FieldText);
+        if (key == GameKey.Enter)
+        {
+            if (Editing) CommitSalary(FieldText);
+            else Events.Add("stray enter");
+        }
         Rebuild();
         return true;
     }
@@ -156,10 +168,31 @@ internal sealed class FakeFm : IGame
     public bool Scroll(UiNode scroll, float pixels, out string how)
     {
         how = "scrollbar";
-        ScrollPos = Math.Max(0, Math.Min(MaxScroll, ScrollPos + pixels));
+        if (scroll?.Name == "salary-list")
+            SalaryListScroll = Math.Max(0, Math.Min(SalaryListMaxScroll, SalaryListScroll + pixels));
+        else ScrollPos = Math.Max(0, Math.Min(MaxScroll, ScrollPos + pixels));
         Rebuild();
         return true;
     }
+
+    /// <summary>FM27's salary list: set amounts from low to the club's maximum (the current offer isn't in it).</summary>
+    public List<double> Fm27SalaryList()
+    {
+        int n = LongSalaryList ? 30 : 15;
+        var list = new List<double>();
+        double lo = Math.Max(50, C.Max * 0.12);
+        for (int i = 0; i < n - 1; i++)
+        {
+            double v = lo * Math.Pow(C.Max / lo, i / (double)(n - 1));
+            v = v < 1000 ? Math.Round(v / 10) * 10 : Math.Round(v / 50) * 50;
+            if (Math.Abs(v - Offer.Wage) > 0.5 && v < C.Max && !list.Contains(v)) list.Add(v);
+        }
+        list.Add(C.Max);
+        return list;
+    }
+
+    private const float SalaryRowH = 34, SalaryBoxH = 15 * 34;
+    private float SalaryListMaxScroll => Math.Max(0, Fm27SalaryList().Count * SalaryRowH - SalaryBoxH);
 
     private float MaxScroll => Math.Max(0, Jobs.Count * RowH - ListH);
 
@@ -409,7 +442,21 @@ internal sealed class FakeFm : IGame
 
         // salary
         Add("Salary", 505, 263, 48, 20);
-        if (Editing)
+        if (SalaryMode == "fm27")
+        {
+            // Always a type-in box showing the plain number; clicking it focuses it and opens the list.
+            var shown = Editing ? FieldText : Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture);
+            var f = Add(null, 1208, 256, 170, 36, () =>
+            {
+                if (!Editing) { Editing = true; FieldText = Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture); }
+                Popup = "salary";
+            });
+            f.IsField = true; f.Type = "TextField"; f.FieldValue = shown;
+            _parents.Push(f.Id);
+            Add(shown, 1223, 264, 60, 20);
+            _parents.Pop();
+        }
+        else if (Editing)
         {
             var f = Add(null, 1208, 256, 170, 36, null, clickable: false);
             f.IsField = true; f.Type = "TextField"; f.FieldValue = FieldText;
@@ -475,6 +522,22 @@ internal sealed class FakeFm : IGame
                 int captured = y;
                 Button(YearsLabel(y), 1216, 385 + (y - 1) * 34, 242, 32, () => { Offer.Years = captured; Popup = null; });
             }
+        }
+        else if (Popup == "salary" && SalaryMode == "fm27")
+        {
+            var box = Add(null, 1208, 296, 170, SalaryBoxH);
+            box.Name = "salary-list"; box.IsScroll = true; box.Type = "ScrollView";
+            box.ScrollValue = SalaryListScroll; box.ScrollLow = 0; box.ScrollHigh = SalaryListMaxScroll; box.CanScroll = SalaryListMaxScroll > 0;
+            _parents.Push(box.Id);
+            int i = 0;
+            foreach (var v in Fm27SalaryList())
+            {
+                float y = 300 + i++ * SalaryRowH - SalaryListScroll;
+                if (y < 296 || y + 30 > 296 + SalaryBoxH) continue; // only what fits in the box is drawn
+                double captured = v;
+                Button($"${v:#,0} p/w", 1208, y, 170, 30, () => { SetWage(captured); Popup = null; Editing = false; });
+            }
+            _parents.Pop();
         }
         else if (Popup == "salary")
         {

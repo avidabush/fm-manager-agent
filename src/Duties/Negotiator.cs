@@ -16,6 +16,8 @@ internal sealed class Negotiator : AgentDuty
     private UiNode _offerBtn;
     private Terms _lastSeen;
     private double? _clubMax;
+    /// <summary>FM27: the salary is always a type-in box (FM26-style screens show it only while you edit).</summary>
+    private bool _fieldAlways;
 
     public Negotiator(IAgentHost host) : base(host) { }
 
@@ -152,6 +154,7 @@ internal sealed class Negotiator : AgentDuty
         if (cs == null) { Fail("This isn't a head coach contract screen."); yield break; }
         _club = Or(cs.Club, "the club");
         _handledClub = _club;
+        _fieldAlways = cs.SalaryField != null;
         RememberStyle(cs);
         var initial = cs.Terms;
         _lastSeen = initial;
@@ -427,6 +430,9 @@ internal sealed class Negotiator : AgentDuty
             .ToList();
     }
 
+    /// <summary>True while the salary is being edited (only meaningful where the box appears just for editing).</summary>
+    private bool Editing(ContractScreen c) => !_fieldAlways && c?.SalaryField != null;
+
     private IEnumerable<Wait> SetWage(double value, Result r)
     {
         r.Ok = false;
@@ -437,61 +443,88 @@ internal sealed class Negotiator : AgentDuty
         bool Done(ScreenModel s)
         {
             var c = Read(s);
-            return c != null && c.SalaryField == null && c.Wage.HasValue && Math.Abs(c.Wage.Value - value) <= tol;
+            return c != null && !Editing(c) && c.Wage.HasValue && Math.Abs(c.Wage.Value - value) <= tol;
         }
+        if (Done(Game.Screen)) { r.Ok = true; r.Value = value; yield break; }
 
-        // A. Click the salary to type into it (or to open its list).
-        var before = Game.Screen;
-        if (cs?.SalaryField == null)
+        // A. An always-there salary box: set its value directly (committed like leaving the box).
+        if (_fieldAlways && cs?.SalaryField != null && Game.SetField(cs.SalaryField, digits, out _))
+            yield return Wait.Until(Game, Done, 1.0);
+
+        if (!Done(Game.Screen))
         {
-            var open = new Result();
-            foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => { var c = Read(s); return c?.SalaryField != null || MoneyItems(s, before, c).Count >= 2; }, "the salary", open, 1.5))
-                yield return w;
-        }
-        cs = Read();
-        if (cs?.SalaryField != null)
-        {
-            if (Game.SetField(cs.SalaryField, digits, out _))
+            // B. Click the salary: to type into it, or to open its list.
+            var before = Game.Screen;
+            cs = Read();
+            bool opened = Editing(cs);
+            if (!opened)
             {
-                var w = Wait.Until(Game, s => Done(s) || Read(s)?.SalaryField == null, 1.5);
-                yield return w;
+                var open = new Result();
+                foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => { var c = Read(s); return Editing(c) || MoneyItems(s, before, c).Count >= 2; }, "the salary", open, 1.5))
+                    yield return w;
+                opened = open.Ok;
             }
             cs = Read();
-            if (cs?.SalaryField != null && !Done(Game.Screen))
+            bool listOpen = MoneyItems(Game.Screen, before, cs).Count >= 2;
+
+            // Keys are only sent right after the box visibly reacted (it's focused), never blind.
+            if (opened && cs?.SalaryField != null)
             {
-                if (Game.Type(digits, true, true))
-                    yield return Wait.Until(Game, s => Done(s) || Read(s)?.SalaryField == null, 2.5);
-                cs = Read();
-                if (cs?.SalaryField != null) { Game.Key(GameKey.Enter); yield return Wait.Fresh(Game, 0.3); }
+                if (!_fieldAlways && Game.SetField(cs.SalaryField, digits, out _))
+                    yield return Wait.Until(Game, s => Done(s) || !Editing(Read(s)), 1.5);
+                if (!Done(Game.Screen) && (Editing(Read()) || _fieldAlways) && Game.Type(digits, true, true))
+                    yield return Wait.Until(Game, s => Done(s) || (!_fieldAlways && !Editing(Read(s))), 2.5);
+                if (Editing(Read())) { Game.Key(GameKey.Enter); yield return Wait.Fresh(Game, 0.3); }
             }
-        }
-        else
-        {
-            var items = MoneyItems(Game.Screen, before, cs);
-            if (items.Count >= 2)
+
+            // C. Pick the nearest salary from the list.
+            var items = MoneyItems(Game.Screen, before, Read());
+            if (!Done(Game.Screen) && items.Count >= 2)
             {
-                var keys = ScreenModel.Keys(items);
                 var pick = items.OrderBy(i => Math.Abs((Money.Parse(i.Text) ?? 0) - value)).First();
                 var pickKey = ScreenModel.KeyOf(pick);
+                var keys = ScreenModel.Keys(items);
                 var pr = new Result();
                 foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(s.ClickableOf).FirstOrDefault(c => c != null),
                              s => !s.AnyOf(keys), pick.Text, pr, 1.5))
                     yield return w;
             }
+
+            // Leave no list open behind.
+            if (listOpen || MoneyItems(Game.Screen, before, Read()).Count >= 2)
+                foreach (var w in CloseSalaryList(before, value)) yield return w;
         }
 
         yield return Fresh();
         cs = Read();
         if (Done(Game.Screen)) { r.Ok = true; r.Value = value; yield break; }
-        if (cs?.Wage != null && start.HasValue && cs.Wage.Value < value - tol && cs.Wage.Value > start.Value + tol && cs.SalaryField == null)
+        if (cs?.Wage != null && start.HasValue && cs.Wage.Value < value - tol && cs.Wage.Value > start.Value + tol && !Editing(cs))
         {
             r.Ok = true; // capped by the game: this is the club's maximum
             r.Value = cs.Wage.Value;
             yield break;
         }
 
-        // B. The - / + buttons, one press at a time.
+        // D. The - / + buttons, one press at a time.
         foreach (var w in StepWage(value, r)) yield return w;
+    }
+
+    /// <summary>
+    /// Closes the salary list. With an always-there salary box: leave the box holding <paramref name="keep"/>
+    /// first (Escape would undo what was typed); otherwise Escape first. Clicking the salary again last.
+    /// </summary>
+    private IEnumerable<Wait> CloseSalaryList(ScreenModel before, double keep)
+    {
+        bool Open(ScreenModel s) => MoneyItems(s, before, Read(s)).Count >= 2;
+        for (int step = 0; step < 3 && Open(Game.Screen); step++)
+        {
+            bool tried;
+            var how = _fieldAlways ? step : step == 0 ? 1 : step == 1 ? 0 : 2;
+            if (how == 0) { var f = Read()?.SalaryField; tried = f != null && Game.SetField(f, Money.Digits(keep), out _); }
+            else if (how == 1) tried = Game.Key(GameKey.Escape);
+            else { var o = Read()?.SalaryValue; tried = o != null && Game.Press(o, 0, out _); }
+            if (tried) yield return Wait.Until(Game, x => !Open(x), 1.0);
+        }
     }
 
     private IEnumerable<Wait> StepWage(double value, Result r)
@@ -546,34 +579,45 @@ internal sealed class Negotiator : AgentDuty
         if (cs?.SalaryValue == null) { r.Error = "salary not found"; yield break; }
         double original = cs.Wage ?? 0;
         var before = Game.Screen;
+        int ListCount(ScreenModel s) => MoneyItems(s, before, Read(s)).Count;
 
+        // Click the salary: a list of salaries opens (FM27 also focuses its type-in box).
         var open = new Result();
-        foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => { var c = Read(s); return c?.SalaryField != null || MoneyItems(s, before, c).Count >= 2; }, "the salary", open, 1.5))
+        foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => ListCount(s) >= 2 || Editing(Read(s)), "the salary", open, 1.5))
             yield return w;
-        if (!open.Ok) { r.Error = "the salary control didn't open"; yield break; }
+        // The box can react a moment before its list is drawn.
+        if (open.Ok && ListCount(Game.Screen) < 2)
+            yield return Wait.Until(Game, s => ListCount(s) >= 2, 0.8);
 
-        cs = Read();
-        var items = MoneyItems(Game.Screen, before, cs);
+        var items = MoneyItems(Game.Screen, before, Read());
         if (items.Count >= 2)
         {
-            // A list of salaries: its top entry is the most they can pay.
-            r.Value = items.Max(i => Money.Parse(i.Text) ?? 0);
-            r.Ok = r.Value > 0;
-            var keys = ScreenModel.Keys(items);
-            foreach (var w in ClosePopup(s => s.AnyOf(keys), s => Read(s)?.SalaryValue)) yield return w;
+            // A list of salaries: its highest entry is the most they can pay.
+            double max = items.Max(i => Money.Parse(i.Text) ?? 0);
+            var scroll = ScrollOf(Game.Screen, items[0]);
+            if (scroll != null && scroll.CanScroll && scroll.ScrollValue < scroll.ScrollHigh - 1 && Game.Scroll(scroll, 100_000, out _))
+            {
+                yield return Fresh();
+                var more = MoneyItems(Game.Screen, before, Read());
+                if (more.Count > 0) max = Math.Max(max, more.Max(i => Money.Parse(i.Text) ?? 0));
+            }
+            r.Value = max;
+            r.Ok = max > 0;
+            foreach (var w in CloseSalaryList(before, original)) yield return w;
             yield break;
         }
 
-        if (cs?.SalaryField != null)
+        cs = Read();
+        if (cs?.SalaryField != null && (open.Ok || _fieldAlways))
         {
-            // Type something huge and see where the game caps it.
+            // No list: type something huge and see where the game caps it.
             double huge = Math.Max(9_999_999, Data.Contract.WageTarget * 20);
             var digits = Money.Digits(huge);
-            bool set = Game.SetField(cs.SalaryField, digits, out _);
-            if (set) yield return Wait.Until(Game, s => Read(s)?.SalaryField == null, 1.5);
-            if (Read()?.SalaryField != null && Game.Type(digits, true, true))
-                yield return Wait.Until(Game, s => Read(s)?.SalaryField == null, 2.5);
-            if (Read()?.SalaryField != null) { Game.Key(GameKey.Escape); yield return Wait.Fresh(Game, 0.3); }
+            bool Changed(ScreenModel s) { var c = Read(s); return c != null && !Editing(c) && c.Wage.HasValue && Math.Abs(c.Wage.Value - original) > 0.5; }
+            if (Game.SetField(cs.SalaryField, digits, out _)) yield return Wait.Until(Game, Changed, 1.5);
+            if (!Changed(Game.Screen) && Editing(Read()) && Game.Type(digits, true, true))
+                yield return Wait.Until(Game, Changed, 2.5);
+            if (Editing(Read())) { Game.Key(GameKey.Escape); yield return Wait.Fresh(Game, 0.3); }
             yield return Fresh();
             var shown = Read()?.Wage;
             if (shown.HasValue && shown.Value < huge * 0.5 && Math.Abs(shown.Value - original) > 0.5)
@@ -581,7 +625,7 @@ internal sealed class Negotiator : AgentDuty
                 r.Ok = true;
                 r.Value = shown.Value;
             }
-            else r.Error = "the salary field isn't capped";
+            else r.Error = "the salary box isn't capped";
 
             // Put their offer back while you decide.
             if (shown.HasValue && Math.Abs(shown.Value - original) > 0.5)
@@ -590,6 +634,15 @@ internal sealed class Negotiator : AgentDuty
                 foreach (var w in SetWage(original, back)) yield return w;
             }
         }
+        else if (!open.Ok) r.Error = "the salary control didn't open";
+    }
+
+    /// <summary>The scroll area a node sits in (nearest scrollable ancestor).</summary>
+    private static UiNode ScrollOf(ScreenModel s, UiNode n)
+    {
+        for (var cur = s[n.Parent]; cur != null; cur = s[cur.Parent])
+            if (cur.IsScroll) return cur;
+        return null;
     }
 
     private IEnumerable<Wait> ClosePopup(Func<ScreenModel, bool> isOpen, Func<ScreenModel, UiNode> opener)

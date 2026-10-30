@@ -59,7 +59,7 @@ In the **Contract negotiation** card, press **Your terms**:
 
 When a job offer arrives, open it and press **Negotiate for me** in the panel. On the offer message itself, the button says **Open & negotiate for me**. The agent:
 
-1. **Checks the club's maximum salary** before anything else.
+1. **Checks the club's maximum salary** before anything else: it clicks the salary box and reads the highest amount in the list that opens (the list ends at the club's maximum), then closes it without changing the offer.
    - If even your minimum is above it, it stops and asks you. **Go for the maximum with this club** applies to this club only; your saved range doesn't change.
    - If only your target is above it, it offers **Aim for the club's maximum**.
 2. **Opens at your target** (or the club's maximum, if lower) with your preferred contract length, and presses **Suggest Terms**.
