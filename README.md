@@ -28,17 +28,17 @@ Open the Agent panel. In the **Job hunting** card, press **Turn on**. While it's
 
 - **The agent applies by itself.** Every day, or every 3, 7 or 14 in-game days (your choice in **Filters**), once you've left the game alone for a few seconds, it:
   1. opens Career → Head Coach Vacancies;
-  2. reads the whole list;
-  3. applies;
-  4. goes back to where you were.
+  2. presses the game's **Apply for all jobs** and confirms the popup;
+  3. goes back to where you were.
 
-  It also runs whenever you open that page yourself.
-- **Filters** decide which jobs count:
+  It also does this whenever you open that page yourself. If *Apply for all jobs* is greyed out, there's nothing new and it does nothing.
+- **Only some jobs?** In **Filters**, set **Apply for** to **Only jobs matching my filters** and choose:
   - minimum club rating;
   - national teams yes or no;
   - which nations (the list fills in once the agent has seen the jobs page).
-- **How it applies:** if every open job matches your filters, it presses the game's own **Apply for all jobs**. Otherwise it applies only to the matching ones, one by one, so filtered-out jobs aren't applied for.
-- **Already applied:** jobs you've already applied for are skipped.
+
+  In this mode it reads the list and applies to the matching jobs one by one (it still uses *Apply for all jobs* when every open job matches). Jobs you've already applied for are skipped.
+- **If something stops it,** the panel and the log say why, and it tries again the next in-game day (or press **Check jobs now**).
 - **If it can't read the in-game date,** it checks every 15 minutes of play instead and says so in the panel.
 - Press **Turn off** when you're happy where you are. Nothing is applied for while it's off.
 
@@ -107,7 +107,7 @@ Your wage range, clauses and job filters are set in the panel and saved in `BepI
 
 - **Setup can't download BepInEx:** click the link Setup shows, download the file whose name starts with `BepInEx-Unity.IL2CPP-win-x64`, put it next to `ManagerAgent-Setup.exe`, and click **Try again**.
 - **Setup asks for administrator permission:** this happens when the game is in a protected folder. Click Yes.
-- **The agent doesn't apply, or can't set the salary/length:** with that screen open, press **Dump UI** in the panel. Then set `VerboseLog = true` in the cfg, try again, and send the dump plus `BepInEx\LogOutput.log`.
+- **The agent doesn't apply, or can't set the salary/length:** with that screen open, press **Dump UI** in the panel, then **Open dumps folder** to find the file (it's in `BepInEx\config\ManagerAgent\dumps` inside the game folder; the log also shows the full path). Set `VerboseLog = true` in the cfg, try again, and send the dump plus `BepInEx\LogOutput.log`.
 - **It presses things too slowly or not at all:** the log says which press method worked. Put that one first in `ClickStrategies`.
 
 ## FM27 (out November 10)

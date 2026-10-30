@@ -96,14 +96,20 @@ internal sealed class Agent : IAgentHost
 
     public void DumpUi() => DumpUi(null);
 
+    public void OpenDumpsFolder()
+    {
+        try { System.Diagnostics.Process.Start("explorer.exe", "\"" + AgentPaths.DumpDir + "\""); }
+        catch (Exception ex) { AgentLog.Warn("Couldn't open the folder (" + ex.Message + "). It's " + AgentPaths.DumpDir); }
+    }
+
     public void DumpUi(string reason)
     {
         try
         {
             var path = UiDump.Write(OwnElementIds);
             var name = System.IO.Path.GetFileName(path);
-            if (reason == null) AgentLog.Info($"UI dump written: {name} (in BepInEx\\config\\ManagerAgent\\dumps)");
-            else AgentLog.Warn($"Saved {name} for troubleshooting — {reason}. It's in BepInEx\\config\\ManagerAgent\\dumps.");
+            if (reason == null) AgentLog.Info($"UI dump saved: {path} (\"Open dumps folder\" in the panel).");
+            else AgentLog.Warn($"Saved a UI dump for troubleshooting — {reason}: {path}");
         }
         catch (Exception ex)
         {

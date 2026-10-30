@@ -10,7 +10,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "com.manageragent.fm";
     public const string Name = "Manager Agent";
-    public const string Version = "0.3.1";
+    public const string Version = "0.3.2";
 
     internal static Agent Agent;
 

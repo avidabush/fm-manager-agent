@@ -49,8 +49,9 @@ internal static class AgentTests
         }
     }
 
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == "--replay") return DumpReplay.Run(args[1]);
         Tmp = Path.Combine(Path.GetTempPath(), "ma-agent-tests-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         Directory.CreateDirectory(Tmp);
         typeof(BepInEx.Paths).GetProperty("ConfigPath")!.SetValue(null, Tmp);
@@ -275,6 +276,7 @@ internal static class AgentTests
             h.Duties.Add(jh);
             h.Run(() => false, 3);
             Check("Off: does nothing on the jobs page", fm.Presses == 0);
+            h.Data.Jobs.ApplyMode = "filtered";
             h.Data.Jobs.Nations = new List<string> { "ENG", "NOR" };
             jh.SetEnabled(true);
             bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 300);
@@ -294,6 +296,7 @@ internal static class AgentTests
             var h = new Host(fm, "jobs2");
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
+            h.Data.Jobs.ApplyMode = "filtered";
             h.Data.Jobs.Nations = new List<string> { "NOR" };
             jh.SetEnabled(true);
             bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 300);
@@ -304,10 +307,11 @@ internal static class AgentTests
             var h = new Host(fm, "jobs3");
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
+            h.Data.Jobs.ApplyMode = "filtered";
             h.Data.Jobs.IncludeNationalTeams = true;
             jh.SetEnabled(true);
             bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 60);
-            Check("Wide-open filters use the game's \"Apply for all jobs\"", done && fm.Events.Contains("applied all"), string.Join(" | ", fm.Events));
+            Check("Only-matching mode with wide-open filters still uses \"Apply for all jobs\"", done && fm.Events.Contains("applied all"), string.Join(" | ", fm.Events));
         }
         {
             var fm = FakeFm.WithJobs();
@@ -316,6 +320,7 @@ internal static class AgentTests
             var h = new Host(fm, "jobs4");
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
+            h.Data.Jobs.ApplyMode = "filtered";
             h.Data.Jobs.Nations = new List<string> { "LTU" };
             jh.SetEnabled(true);
             bool done = h.Run(() => fm.Jobs.Any(j => j.Applied) && !jh.IsRunning, 200);
@@ -342,22 +347,74 @@ internal static class AgentTests
                      ("only real mouse clicks work", f => f.WorkingMethod = 2),
                  })
         {
+          foreach (var mode in new[] { "all", "filtered" })
+          {
             var fm = FakeFm.WithJobs();
             fm.Page = "portal";
             tweak(fm);
             fm.Tick();
-            var h = new Host(fm, "user-" + label.Replace(' ', '-').Replace(',', '_'));
+            var h = new Host(fm, "user-" + mode + "-" + label.Replace(' ', '-').Replace(',', '_'));
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
             h.Data.Jobs.CheckEveryDays = 3;
             h.Data.Jobs.IncludeNationalTeams = false;
+            h.Data.Jobs.ApplyMode = mode;
             jh.SetEnabled(true);
             bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 400);
             var applied = fm.Jobs.Where(j => j.Applied).Select(j => j.Team).OrderBy(x => x).ToList();
-            Check($"Your settings ({label}): opens the page itself and applies to all 10 club vacancies, no national teams",
-                done && applied.SequenceEqual(clubVacancies) && fm.Page == "portal", $"{string.Join(", ", applied)} | page={fm.Page} | {jh.LastSummary}");
-            Check($"Your settings ({label}): reads the date, next check in 3 days, nothing looked odd",
+            if (mode == "all")
+                Check($"Default — apply for all ({label}): opens the page itself, presses \"Apply for all jobs\", confirms, goes back",
+                    done && fm.Events.Contains("applied all") && fm.Jobs.Where(j => j.Security == "Available").All(j => j.Applied) && fm.Page == "portal",
+                    $"{string.Join(" | ", fm.Events)} | page={fm.Page} | {jh.LastSummary}");
+            else
+                Check($"Only matching ({label}): opens the page itself and applies to all 10 club vacancies, no national teams",
+                    done && applied.SequenceEqual(clubVacancies) && fm.Page == "portal", $"{string.Join(", ", applied)} | page={fm.Page} | {jh.LastSummary}");
+            Check($"{(mode == "all" ? "Default" : "Only matching")} ({label}): reads the date, next check in 3 days, nothing looked odd",
                 jh.DateKnown && jh.DaysUntilNextCheck == 3 && h.Dumps == 0, $"date={jh.Date.Raw} next={jh.DaysUntilNextCheck} dumps={h.Dumps}");
+          }
+        }
+        // Default mode ("Apply for all jobs") in the ways FM27's button and confirm box might behave.
+        foreach (var (label, tweak) in new (string, Action<FakeFm>)[]
+                 {
+                     ("button wrapped like FM27's", f => f.NestedApplyAll = true),
+                     ("confirm box says Apply / Cancel", f => f.OtherConfirmWording = true),
+                     ("no confirm box (don't ask again)", f => f.ConfirmOnApplyAll = false),
+                     ("only real mouse clicks work", f => f.WorkingMethod = 2),
+                 })
+        {
+            var fm = FakeFm.WithJobs();
+            tweak(fm);
+            fm.Tick();
+            var h = new Host(fm, "all-" + label.Replace(' ', '-').Replace('\'', '_').Replace('(', '_').Replace(')', '_').Replace('/', '_'));
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            jh.SetEnabled(true);
+            bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 120);
+            Check($"Apply for all ({label}): applies for every open job, confirm box gone",
+                done && fm.Events.Count(e => e == "applied all") == 1 && fm.Confirm == null && jh.LastSummary.Contains("Applied for all"),
+                $"{string.Join(" | ", fm.Events)} | {jh.LastSummary} | {jh.Status}");
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            foreach (var j in fm.Jobs) j.Applied = true; // already applied everywhere → button greyed out
+            fm.Tick();
+            var h = new Host(fm, "all-greyed");
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            jh.SetEnabled(true);
+            bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 60);
+            Check("Apply for all: greyed-out button → nothing new, no presses", done && fm.Presses == 0 && jh.LastSummary.Contains("Nothing new"), jh.LastSummary);
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.WorkingMethod = 9; // the game ignores every way of pressing
+            fm.Tick();
+            var h = new Host(fm, "all-stuck");
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            jh.SetEnabled(true);
+            h.Run(() => !jh.IsRunning && jh.Status.StartsWith("Stopped"), 60);
+            Check("Apply for all: if the button never reacts, says so instead of stopping silently", jh.Status.Contains("didn't react") && AgentLog.Recent.Any(l => l.Contains("didn't react")), jh.Status);
         }
         {
             var fm = FakeFm.WithJobs();
@@ -366,9 +423,10 @@ internal static class AgentTests
             var h = new Host(fm, "jobs-all-match");
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
+            h.Data.Jobs.ApplyMode = "filtered";
             jh.SetEnabled(true);
             bool done = h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 200);
-            Check("Every open job matches your filters → uses \"Apply for all jobs\"", done && fm.Events.Contains("applied all") && jh.LastSummary.Contains("Apply for all"), jh.LastSummary);
+            Check("Only-matching mode: every open job matches → uses \"Apply for all jobs\"", done && fm.Events.Contains("applied all") && jh.LastSummary.Contains("Apply for all"), jh.LastSummary);
         }
         {
             var fm = FakeFm.WithJobs();
@@ -376,9 +434,10 @@ internal static class AgentTests
             var h = new Host(fm, "jobs-not-all");
             var jh = new JobHunter(h);
             h.Duties.Add(jh);
+            h.Data.Jobs.ApplyMode = "filtered";
             jh.SetEnabled(true);
             h.Run(() => !jh.IsRunning && h.Data.Jobs.LastCheckDate.Length > 0, 400);
-            Check("National-team vacancies on the list but you skip them → doesn't use \"Apply for all jobs\"",
+            Check("Only-matching mode: national-team vacancies you skip → doesn't use \"Apply for all jobs\"",
                 !fm.Events.Contains("applied all") && fm.Jobs.Count(j => j.Applied) == 10 && !fm.Jobs.Any(j => j.Applied && j.Finances == "-"), jh.LastSummary);
         }
         {

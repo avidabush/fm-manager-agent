@@ -1,11 +1,12 @@
 namespace ManagerAgent;
 
 /// <summary>
-/// Job hunting. While switched on, the agent applies for the vacancies that match your filters:
+/// Job hunting. While switched on, the agent applies for open jobs:
 ///   • by opening the jobs page itself every few in-game days (when you're idle), and
 ///   • whenever you open the jobs page yourself.
-/// It reads the whole list first. If every open job matches your filters it simply uses the game's
-/// "Apply for all jobs"; otherwise it applies to the matching ones one by one.
+/// By default it presses the game's own "Apply for all jobs" and confirms. If you choose
+/// "only jobs matching my filters", it reads the list and applies to those one by one
+/// (still using "Apply for all jobs" when every open job happens to match).
 /// It learns the menu path to the jobs page the first time you open it yourself.
 /// </summary>
 internal sealed class JobHunter : AgentDuty
@@ -50,7 +51,7 @@ internal sealed class JobHunter : AgentDuty
         else
         {
             _passDoneThisVisit = false;
-            AgentLog.Info("Job hunting on — " + Data.ToFilter().Describe() + ".");
+            AgentLog.Info("Job hunting on — " + (ApplyToAll ? "applying for all open jobs" : "only jobs matching: " + Data.ToFilter().Describe()) + ".");
         }
     }
 
@@ -106,7 +107,7 @@ internal sealed class JobHunter : AgentDuty
         }
 
         if (!onPage && Data.Jobs.AutoVisit && Due && Game.Now >= _navBlockedUntil && (_navBlockedDate == "" || _navBlockedDate != Date.Iso) &&
-            Game.UserIdleSeconds >= IdleBeforeVisit && Game.Now - Date.ChangedAt > 3 && s.Text(Text.ConfirmTitle) == null &&
+            Game.UserIdleSeconds >= IdleBeforeVisit && Game.Now - Date.ChangedAt > 3 && !JobsPage.ConfirmShowing(s, Text) &&
             ContractScreen.OfferMessageButton(s, Text) == null && !ContractScreen.IsShowing(s, Text))
         {
             if (!DateKnown && !_dateWarned)
@@ -211,18 +212,82 @@ internal sealed class JobHunter : AgentDuty
 
     // ------------------------------------------------------------------ the pass
 
+    public bool ApplyToAll => !string.Equals(Data.Jobs.ApplyMode, "filtered", StringComparison.OrdinalIgnoreCase);
+
     private IEnumerable<Wait> Pass(bool navigated)
+    {
+        yield return Fresh();
+        if (!JobsPage.IsShowing(Game.Screen, Text)) { Quit("I'm not on the jobs page any more"); yield break; }
+        var inner = ApplyToAll ? ApplyAllPass() : FilteredPass();
+        foreach (var w in inner) yield return w;
+        foreach (var w in GoBack(navigated)) yield return w;
+    }
+
+    /// <summary>Stops a pass early, saying why (in the panel and the log).</summary>
+    private void Quit(string why)
+    {
+        _status = "Stopped: " + why;
+        AgentLog.Warn("Job hunting: " + why + ". I'll try again tomorrow (in-game), or press \"Check jobs now\".");
+        _lastRealCheck = Game.Now;
+        _navBlockedUntil = Game.Now + 600;
+        _navBlockedDate = Date.Iso ?? "";
+    }
+
+    /// <summary>Default: the game's own "Apply for all jobs", then confirm.</summary>
+    private IEnumerable<Wait> ApplyAllPass()
+    {
+        _status = "Applying for all jobs…";
+        var s0 = Game.Screen;
+        var btn = s0.Button(Text.ApplyForAllJobs);
+        if (btn == null)
+        {
+            Finish("No \"Apply for all jobs\" button on the jobs page — nothing new to apply for (if there are open jobs, use \"Dump UI\" and send me the file).");
+            yield break;
+        }
+        if (!btn.Enabled) { Finish("Nothing new — \"Apply for all jobs\" is greyed out (already applied everywhere)."); yield break; }
+
+        // Success = the confirm box appears, or (if you've ticked "don't show again") the selected job's
+        // "Apply For Job" goes grey.
+        var single = s0.Button(Text.ApplyForJob);
+        bool singleWasEnabled = single != null && single.Enabled;
+        bool Reacted(ScreenModel s)
+        {
+            if (JobsPage.ConfirmButton(s, Text) != null) return true;
+            var b = s.Button(Text.ApplyForJob);
+            return singleWasEnabled && b != null && !b.Enabled;
+        }
+
+        var r = new Result();
+        foreach (var w in PressUntil(x => x.Button(Text.ApplyForAllJobs), Reacted, "Apply for all jobs", r, 3.0))
+            yield return w;
+        if (!r.Ok)
+        {
+            Quit(singleWasEnabled ? "\"Apply for all jobs\" didn't react" : "I pressed \"Apply for all jobs\" but couldn't see a confirm box");
+            yield break;
+        }
+
+        AgentLog.Info("Pressed \"Apply for all jobs\" (" + r.How + ").", panel: false);
+        if (JobsPage.ConfirmButton(Game.Screen, Text) != null)
+        {
+            _status = "Confirming…";
+            foreach (var w in PressUntil(x => JobsPage.ConfirmButton(x, Text), x => !JobsPage.ConfirmShowing(x, Text), "the confirm button", r, 3.0))
+                yield return w;
+            if (!r.Ok) { Quit("I couldn't press the confirm button (" + r.Error + ")"); yield break; }
+        }
+        Finish("Applied for all open jobs (Apply for all jobs).");
+    }
+
+    /// <summary>Only jobs matching your filters.</summary>
+    private IEnumerable<Wait> FilteredPass()
     {
         _status = "Reading the job list…";
         var filter = Data.ToFilter();
-        yield return Fresh();
-        if (!JobsPage.IsShowing(Game.Screen, Text)) { _status = "Not on the jobs page"; yield break; }
 
         // 1. Read the whole list.
         var all = new Dictionary<string, JobRow>();
         var order = new List<string>();
         foreach (var w in ScanList(all, order)) yield return w;
-        if (!JobsPage.IsShowing(Game.Screen, Text)) { _status = "Left the jobs page"; yield break; }
+        if (!JobsPage.IsShowing(Game.Screen, Text)) { Quit("the jobs page closed while I was reading it"); yield break; }
         var rows = order.Select(k => all[k]).ToList();
         LearnNations(rows);
         AgentLog.Info($"Jobs page: read {rows.Count} rows — " + string.Join("; ", rows.Take(40).Select(r => r.Debug())), panel: false);
@@ -269,7 +334,7 @@ internal sealed class JobHunter : AgentDuty
             {
                 yield return Fresh();
                 var s = Game.Screen;
-                if (!JobsPage.IsShowing(s, Text)) { _status = "Left the jobs page"; yield break; }
+                if (!JobsPage.IsShowing(s, Text)) { Quit("the jobs page closed while I was applying"); yield break; }
                 var visible = Visible(s, out var scroll);
                 var next = visible.FirstOrDefault(r => left.Contains(r.Key));
                 if (next != null)
@@ -298,7 +363,6 @@ internal sealed class JobHunter : AgentDuty
         if (skipped.Count > 0) parts.Add($"{skipped.Values.Sum()} didn't match ({string.Join(", ", skipped.OrderByDescending(k => k.Value).Take(3).Select(k => $"{k.Value} {k.Key}"))})");
         if (failed > 0) parts.Add($"{failed} couldn't be applied for");
         Finish("Jobs checked: " + string.Join(", ", parts) + ".");
-        foreach (var w in GoBack(navigated)) yield return w;
     }
 
     private void Finish(string summary)
@@ -330,7 +394,7 @@ internal sealed class JobHunter : AgentDuty
         var visible = rows.Where(r => sc == null ? r.BottomY <= s.Height + 1 : r.Top >= sc.Y - 4 && r.BottomY <= sc.Bottom + 4).ToList();
 
         // Double-check the reading: every "Available" in the table should belong to an open job we read.
-        int words = JobsPage.VacancyWordsOnScreen(s, Text, tl, tr, hb);
+        int words = JobsPage.VacancyWordsOnScreen(s, Text, tl, tr, hb, scroll);
         int open = rows.Count(r => r.IsVacancy);
         if (!_dumped && (words > open || rows.Any(r => r.Team.Length == 0 || ScreenModel.Split(Text.Vacancy).Any(v => ScreenModel.Eq(r.Team, v)))))
         {
@@ -409,10 +473,10 @@ internal sealed class JobHunter : AgentDuty
 
     private IEnumerable<Wait> ApplyAll(Result r)
     {
-        foreach (var w in PressUntil(s => s.Button(Text.ApplyForAllJobs), s => s.Text(Text.ConfirmTitle) != null, "Apply for all jobs", r))
+        foreach (var w in PressUntil(s => s.Button(Text.ApplyForAllJobs), s => JobsPage.ConfirmButton(s, Text) != null, "Apply for all jobs", r))
             yield return w;
         if (!r.Ok) yield break;
-        foreach (var w in PressUntil(s => s.Text(Text.ConfirmTitle) != null ? s.Button(Text.Yes) : null, s => s.Text(Text.ConfirmTitle) == null, "Yes", r))
+        foreach (var w in PressUntil(s => JobsPage.ConfirmButton(s, Text), s => !JobsPage.ConfirmShowing(s, Text), "the confirm button", r))
             yield return w;
     }
 
@@ -450,7 +514,7 @@ internal sealed class JobHunter : AgentDuty
 
         bool Applied(ScreenModel s)
         {
-            if (s.Text(Text.ConfirmTitle) != null) return true;
+            if (JobsPage.ConfirmShowing(s, Text)) return true;
             var b = s.Button(Text.ApplyForJob);
             return b == null || !b.Enabled;
         }
@@ -464,9 +528,9 @@ internal sealed class JobHunter : AgentDuty
             yield break;
         }
 
-        if (Game.Screen.Text(Text.ConfirmTitle) != null)
+        if (JobsPage.ConfirmShowing(Game.Screen, Text))
         {
-            foreach (var w in PressUntil(s => s.Text(Text.ConfirmTitle) != null ? s.Button(Text.Yes) : null, s => s.Text(Text.ConfirmTitle) == null, "Yes", ar))
+            foreach (var w in PressUntil(s => JobsPage.ConfirmButton(s, Text), s => !JobsPage.ConfirmShowing(s, Text), "the confirm button", ar))
                 yield return w;
             if (!ar.Ok)
             {

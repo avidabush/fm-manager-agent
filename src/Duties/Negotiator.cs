@@ -345,10 +345,10 @@ internal sealed class Negotiator : AgentDuty
         _finalizing = true;
         _status = "Signing…";
         var r = new Result();
-        foreach (var w in PressUntil(s => Read(s)?.Finalize, s => !ContractScreen.IsShowing(s, Text) || s.Text(Text.ConfirmTitle) != null, "Finalize Deal", r, 6))
+        foreach (var w in PressUntil(s => Read(s)?.Finalize, s => !ContractScreen.IsShowing(s, Text) || JobsPage.ConfirmShowing(s, Text), "Finalize Deal", r, 6))
             yield return w;
-        if (r.Ok && Game.Screen.Text(Text.ConfirmTitle) != null)
-            foreach (var w in PressUntil(s => s.Text(Text.ConfirmTitle) != null ? s.Button(Text.Yes) : null, s => s.Text(Text.ConfirmTitle) == null, "Yes", r, 4))
+        if (r.Ok && JobsPage.ConfirmShowing(Game.Screen, Text))
+            foreach (var w in PressUntil(s => JobsPage.ConfirmButton(s, Text), s => !JobsPage.ConfirmShowing(s, Text), "the confirm button", r, 4))
                 yield return w;
         _finalizing = false;
         if (!r.Ok) { Fail("Couldn't press Finalize Deal: " + r.Error); yield break; }

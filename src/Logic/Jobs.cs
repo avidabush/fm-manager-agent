@@ -212,9 +212,61 @@ internal static class JobsPage
         return rows;
     }
 
-    /// <summary>How many "Available" words are in the table (to double-check the reading).</summary>
-    public static int VacancyWordsOnScreen(ScreenModel s, GameText t, float tableLeft, float tableRight, float headerBottom) =>
-        s.Texts.Count(n => n.CY > headerBottom + 4 && n.CX > tableLeft && n.CX < tableRight && ScreenModel.Split(t.Vacancy).Any(v => ScreenModel.Eq(n.Text, v)));
+    /// <summary>How many table rows show "Available" (to double-check the reading). A badge may contain the word twice.</summary>
+    public static int VacancyWordsOnScreen(ScreenModel s, GameText t, float tableLeft, float tableRight, float headerBottom, UiNode table = null)
+    {
+        // Only words inside the jobs table: the screen underneath (e.g. a vacancies widget on your home
+        // screen) stays loaded behind the jobs page.
+        var ys = s.Texts.Where(n => n.CY > headerBottom + 4 && n.CX > tableLeft && n.CX < tableRight && (table == null || s.IsInside(n, table))
+                                    && ScreenModel.Split(t.Vacancy).Any(v => ScreenModel.Eq(n.Text, v)))
+            .Select(n => n.CY).OrderBy(y => y).ToList();
+        int rows = 0;
+        float last = float.MinValue;
+        foreach (var y in ys)
+        {
+            if (y - last > 12) rows++;
+            last = y;
+        }
+        return rows;
+    }
+
+    /// <summary>The confirm button of a "Please Confirm" box (the one nearest its title).</summary>
+    public static UiNode ConfirmButton(ScreenModel s, GameText t)
+    {
+        var yes = ScreenModel.Split(t.Yes);
+        var title = s.Text(t.ConfirmTitle);
+        if (title != null)
+        {
+            // The yes-button nearest the title (labels in order of preference).
+            foreach (var label in yes)
+            {
+                UiNode best = null;
+                float bestD = float.MaxValue;
+                foreach (var n in s.TextsEq(label))
+                {
+                    var c = s.ClickableOf(n);
+                    if (c == null) continue;
+                    float d = Math.Abs(c.CX - title.CX) + Math.Abs(c.CY - title.CY);
+                    if (d < bestD) { bestD = d; best = c; }
+                }
+                if (best != null) return best;
+            }
+        }
+        // Any other wording: a yes-button with a no-button right beside it is a confirmation box.
+        var noButtons = s.TextsEq(t.No).Select(s.ClickableOf).Where(c => c != null).ToList();
+        if (noButtons.Count == 0) return null;
+        foreach (var label in yes)
+            foreach (var n in s.TextsEq(label))
+            {
+                var c = s.ClickableOf(n);
+                if (c != null && noButtons.Any(nb => nb.Id != c.Id && Math.Abs(nb.CY - c.CY) < 40 && Math.Abs(nb.CX - c.CX) < 500))
+                    return c;
+            }
+        return null;
+    }
+
+    /// <summary>True while a confirmation box is showing.</summary>
+    public static bool ConfirmShowing(ScreenModel s, GameText t) => s.Text(t.ConfirmTitle) != null || ConfirmButton(s, t) != null;
 
     /// <summary>Text of the job details panel (right of the table), used to see that a row got selected.</summary>
     public static string SidePanelKey(ScreenModel s, float tableRight, float headerBottom) =>

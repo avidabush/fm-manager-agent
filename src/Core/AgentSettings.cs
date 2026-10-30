@@ -65,6 +65,8 @@ internal sealed class AgentSettings
         t.ApplyForJob = B("ApplyForJob", t.ApplyForJob, "Apply button on the jobs page");
         t.ApplyForAllJobs = B("ApplyForAllJobs", t.ApplyForAllJobs, "Apply-to-everything button");
         t.ConfirmTitle = B("ConfirmTitle", t.ConfirmTitle, "Title of confirmation boxes");
+        t.Yes = B("ConfirmYes", t.Yes, "Buttons that say yes in a confirmation box");
+        t.No = B("ConfirmNo", t.No, "Buttons that say no in a confirmation box");
         t.Yes = B("Yes", t.Yes, "Yes button in confirmation boxes");
         t.Vacancy = B("Vacancy", t.Vacancy, "Job Security value meaning the job is open");
         t.ColCoach = B("ColumnCoach", t.ColCoach, "Jobs table column");

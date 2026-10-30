@@ -11,7 +11,8 @@ internal sealed class GameText
     public string ApplyForJob = "Apply For Job";
     public string ApplyForAllJobs = "Apply for all jobs";
     public string ConfirmTitle = "Please Confirm";
-    public string Yes = "Yes";
+    public string Yes = "Yes|Apply|Confirm|OK";
+    public string No = "No|Cancel";
     public string Vacancy = "Available";
     public string ColCoach = "Current Head Coach|Current Manager";
     public string ColTeam = "Team";

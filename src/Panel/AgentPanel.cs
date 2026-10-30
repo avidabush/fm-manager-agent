@@ -611,6 +611,7 @@ internal sealed class AgentPanel
         var tools = Row(_drop);
         S.Margin(tools, 8, 0, 0, 0);
         tools.Add(_kit.Button("Dump UI", () => _a.DumpUi(), BtnKind.Ghost, scale: 0.8f));
+        tools.Add(_kit.Button("Open dumps folder", () => _a.OpenDumpsFolder(), BtnKind.Ghost, scale: 0.8f));
         if (_a.Settings.TabX.Value >= 0) tools.Add(_kit.Button("Reset tab position", ResetTabPosition, BtnKind.Ghost, scale: 0.8f));
         Line(tools, $"Drag the Agent tab to move it · {_a.Settings.KeyTogglePanel.Value} hides · {_a.Settings.KeyStop.Value} stops", 0.72f, Palette.Faint, 0, 6);
     }
@@ -634,7 +635,7 @@ internal sealed class AgentPanel
                 : $"On — next check in {days} day{(days == 1 ? "" : "s")}.";
         }
         Line(card, status, 0.92f);
-        Line(card, _a.Data.ToFilter().Describe(), 0.8f, Palette.Muted, 0, 4);
+        Line(card, j.ApplyToAll ? "Applies for every open job (Apply for all jobs)" : "Only jobs matching: " + _a.Data.ToFilter().Describe(), 0.8f, Palette.Muted, 0, 4);
         if (j.LastSummary.Length > 0) Line(card, j.LastSummary, 0.78f, Palette.Faint, 0, 6);
 
         var row = Row(card);
@@ -686,27 +687,40 @@ internal sealed class AgentPanel
         var j = _a.Data.Jobs;
         void Save() => _a.Data.Save();
 
-        Line(_drop, "Club rating at least", 0.84f, Palette.Muted, 0, 4);
-        var r1 = Row(_drop);
-        foreach (var name in new[] { "Local", "Regional", "National", "Continental", "Worldwide" })
-        {
-            var captured = name;
-            Chip(r1, name == "Local" ? "Any" : name, string.Equals(j.MinRating, name, StringComparison.OrdinalIgnoreCase), () => { j.MinRating = captured; Save(); });
-        }
+        bool all = !string.Equals(j.ApplyMode, "filtered", StringComparison.OrdinalIgnoreCase);
+        Line(_drop, "Apply for", 0.84f, Palette.Muted, 0, 4);
+        var r0 = Row(_drop);
+        Chip(r0, "All open jobs", all, () => { j.ApplyMode = "all"; Save(); });
+        Chip(r0, "Only jobs matching my filters", !all, () => { j.ApplyMode = "filtered"; Save(); });
+        Line(_drop, all
+                ? "I press the game's \"Apply for all jobs\" and confirm. Pick \"Only jobs matching my filters\" to choose by club rating, nation or national teams."
+                : "I read the list and apply to the matching jobs one by one (or use \"Apply for all jobs\" when every open job matches).",
+            0.74f, Palette.Faint, 4, 2);
 
-        Line(_drop, "National teams", 0.84f, Palette.Muted, 6, 4);
-        var r2 = Row(_drop);
-        Chip(r2, "Skip", !j.IncludeNationalTeams, () => { j.IncludeNationalTeams = false; Save(); });
-        Chip(r2, "Include", j.IncludeNationalTeams, () => { j.IncludeNationalTeams = true; Save(); });
-
-        Line(_drop, j.KnownNations.Count == 0 ? "Nations — open the jobs page once and the nations you can pick appear here." : "Nations (none picked = any nation)", 0.84f, Palette.Muted, 6, 4);
-        var r3 = Row(_drop);
-        Chip(r3, "Any", j.Nations.Count == 0, () => { j.Nations.Clear(); Save(); });
-        foreach (var nat in j.KnownNations.Union(j.Nations).Distinct().OrderBy(x => x))
+        if (!all)
         {
-            var captured = nat;
-            bool picked = j.Nations.Contains(nat);
-            Chip(r3, nat, picked, () => { if (picked) j.Nations.Remove(captured); else j.Nations.Add(captured); Save(); });
+            Line(_drop, "Club rating at least", 0.84f, Palette.Muted, 6, 4);
+            var r1 = Row(_drop);
+            foreach (var name in new[] { "Local", "Regional", "National", "Continental", "Worldwide" })
+            {
+                var captured = name;
+                Chip(r1, name == "Local" ? "Any" : name, string.Equals(j.MinRating, name, StringComparison.OrdinalIgnoreCase), () => { j.MinRating = captured; Save(); });
+            }
+
+            Line(_drop, "National teams", 0.84f, Palette.Muted, 6, 4);
+            var r2 = Row(_drop);
+            Chip(r2, "Skip", !j.IncludeNationalTeams, () => { j.IncludeNationalTeams = false; Save(); });
+            Chip(r2, "Include", j.IncludeNationalTeams, () => { j.IncludeNationalTeams = true; Save(); });
+
+            Line(_drop, j.KnownNations.Count == 0 ? "Nations — open the jobs page once and the nations you can pick appear here." : "Nations (none picked = any nation)", 0.84f, Palette.Muted, 6, 4);
+            var r3 = Row(_drop);
+            Chip(r3, "Any", j.Nations.Count == 0, () => { j.Nations.Clear(); Save(); });
+            foreach (var nat in j.KnownNations.Union(j.Nations).Distinct().OrderBy(x => x))
+            {
+                var captured = nat;
+                bool picked = j.Nations.Contains(nat);
+                Chip(r3, nat, picked, () => { if (picked) j.Nations.Remove(captured); else j.Nations.Add(captured); Save(); });
+            }
         }
 
         Line(_drop, "Open the jobs page and apply for me", 0.84f, Palette.Muted, 6, 4);
@@ -723,7 +737,6 @@ internal sealed class AgentPanel
             Chip(r5, j.ReturnAfterCheck ? "Go back afterwards: on" : "Go back afterwards: off", j.ReturnAfterCheck, () => { j.ReturnAfterCheck = !j.ReturnAfterCheck; Save(); });
         }
 
-        Line(_drop, "If every open job matches these filters I use \"Apply for all jobs\"; otherwise I apply to the matching ones one by one.", 0.74f, Palette.Faint, 6, 2);
         if (j.MenuItemText.Length > 0)
             Line(_drop, $"Way to the jobs page: {(j.MenuParentText.Length > 0 ? j.MenuParentText + " → " : "")}{j.MenuItemText}", 0.76f, Palette.Faint, 6, 2);
         var r6 = Row(_drop);

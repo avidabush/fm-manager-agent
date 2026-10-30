@@ -19,6 +19,8 @@ public sealed class AppliedJob
 public sealed class JobPrefs
 {
     public bool Enabled { get; set; }
+    /// <summary>"all" = press the game's "Apply for all jobs"; "filtered" = only jobs matching the filters, one by one.</summary>
+    public string ApplyMode { get; set; } = "all";
     public bool AutoVisit { get; set; } = true;
     public int CheckEveryDays { get; set; } = 7;
     public bool ReturnAfterCheck { get; set; } = true;

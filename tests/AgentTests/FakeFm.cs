@@ -47,6 +47,9 @@ internal sealed class FakeFm : IGame
     public bool NoScrollView;       // the list scrolls, but isn't a recognisable scroll view
     public float HeaderShift;       // header texts don't line up with the cells
     public bool ConfirmOnSingleApply = true;
+    public bool ConfirmOnApplyAll = true;
+    public bool OtherConfirmWording;  // "Apply For All Jobs" box with Apply / Cancel instead of "Please Confirm" Yes / No
+    public bool NestedApplyAll;       // FM27: an outer clickable wrapper around the real button
     public string Confirm;            // null | "all" | job team
     public const float RowH = 60, ListTop = 220, ListH = 780;
 
@@ -295,7 +298,17 @@ internal sealed class FakeFm : IGame
     private void BuildJobs()
     {
         Add($"{Jobs.Count(j => j.Security == "Available")} Available Jobs", 41, 147, 175, 24);
-        Button("Apply for all jobs", 1660, 140, 128, 36, () => Confirm = "all");
+        bool anyLeft = Jobs.Any(x => x.Security == "Available" && !x.Applied);
+        Action applyAll = () => { if (ConfirmOnApplyAll) Confirm = "all"; else ApplyAllNow(); };
+        if (NestedApplyAll)
+        {
+            var outer = Add(null, 1652, 136, 144, 44, clickable: true); // FMActionButton: does nothing itself
+            outer.Type = "FMActionButton";
+            _parents.Push(outer.Id);
+            Button("Apply for all jobs", 1660, 140, 128, 36, applyAll, enabled: anyLeft);
+            _parents.Pop();
+        }
+        else Button("Apply for all jobs", 1660, 140, 128, 36, applyAll, enabled: anyLeft);
         float hy = 200, hs = HeaderShift;
         Add("Current Head Coach", 90 + hs, hy, 105, 16); Add("Team", 329 + hs, hy, 30, 16); Add("Club Rating", 607 + hs, hy, 60, 16);
         Add("Nation", 746 + hs, hy, 36, 16); Add("Position", 868 + hs, hy, 42, 16); Add("Form", 933 + hs, hy, 26, 16);
@@ -350,16 +363,22 @@ internal sealed class FakeFm : IGame
 
         if (Confirm != null)
         {
-            Add("Please Confirm", 892, 465, 136, 26);
+            Add(OtherConfirmWording ? (Confirm == "all" ? "Apply For All Jobs" : "Apply For Job") : "Please Confirm", 892, 465, 160, 26);
             Add(Confirm == "all" ? "Apply to all teams with a vacancy for head coach?" : $"Apply for the {Confirm} job?", 794, 505, 330, 18);
-            Button("Yes", 910, 543, 40, 34, () =>
+            Button(OtherConfirmWording ? "Apply" : "Yes", 900, 543, 60, 34, () =>
             {
-                if (Confirm == "all") { foreach (var x in Jobs.Where(x => x.Security == "Available")) x.Applied = true; Events.Add("applied all"); }
+                if (Confirm == "all") ApplyAllNow();
                 else { var x = Jobs.First(q => q.Team == Confirm); x.Applied = true; Events.Add("applied " + x.Team); }
                 Confirm = null;
             });
-            Button("No", 962, 543, 40, 34, () => Confirm = null);
+            Button(OtherConfirmWording ? "Cancel" : "No", 972, 543, 60, 34, () => Confirm = null);
         }
+    }
+
+    private void ApplyAllNow()
+    {
+        foreach (var x in Jobs.Where(x => x.Security == "Available")) x.Applied = true;
+        Events.Add("applied all");
     }
 
     private void BuildMessage()
