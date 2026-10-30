@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    ManagerAgent-Setup.exe — .NET Framework 4.7.2 WinForms (built into Windows 10/11, nothing to install).
+    On Windows: dotnet build -c Release  (uses the normal .NET Framework reference assemblies)
+    On Linux:   build-all.sh passes -p:FrameworkPathOverride=/usr/lib/mono/4.7.2-api
+    Expects obj-embedded payloads: ../.build/plugin/ManagerAgent.dll and ../.build/source.zip
+  -->
+  <PropertyGroup>
+    <TargetFramework>net472</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>ManagerAgent-Setup</AssemblyName>
+    <RootNamespace>ManagerAgentSetup</RootNamespace>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <DebugType>none</DebugType>
+    <Deterministic>true</Deterministic>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <PayloadDir>$(MSBuildThisFileDirectory)..\.build\</PayloadDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(FrameworkPathOverride)' != ''">
+    <EnableFrameworkPathOverride>true</EnableFrameworkPathOverride>
+    <AutomaticallyUseReferenceAssemblyPackages>false</AutomaticallyUseReferenceAssemblyPackages>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <EmbeddedResource Include="$(PayloadDir)plugin\ManagerAgent.dll" LogicalName="ManagerAgent.dll" />
+    <EmbeddedResource Include="$(PayloadDir)source.zip" LogicalName="source.zip" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Runs the agent's duties against a simulated FM. Build the prebuild stubs first (build-all.sh does). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <NoWarn>CS0649;CS0414;CS8632</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/**/*.cs" />
+    <Compile Include="*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>../../prebuild/stubs/out/Il2CppInterop.Runtime.dll</HintPath></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>../../prebuild/stubs/out/Il2Cppmscorlib.dll</HintPath></Reference>
+    <Reference Include="BepInEx.Core"><HintPath>../../prebuild/stubs/out/BepInEx.Core.dll</HintPath></Reference>
+    <Reference Include="BepInEx.Unity.IL2CPP"><HintPath>../../prebuild/stubs/out/BepInEx.Unity.IL2CPP.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>../../prebuild/stubs/out/UnityEngine.CoreModule.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.UIElementsModule"><HintPath>../../prebuild/stubs/out/UnityEngine.UIElementsModule.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

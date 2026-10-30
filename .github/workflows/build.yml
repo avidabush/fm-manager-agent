@@ -1,0 +1,55 @@
+name: Build
+
+# Every push and pull request: build the plugin and the installer, and run all tests.
+# Pushing a tag like v0.3.0: also publish ManagerAgent-Setup.exe as a GitHub release.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Mono (for .NET Framework reference assemblies) and zip
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mono-complete zip
+
+      - name: Build plugin + installer, run agent tests
+        run: ./build-all.sh
+
+      - name: Installer tests
+        run: |
+          dotnet build tests/SetupTests.csproj -c Release -o tests/bin -p:FrameworkPathOverride=/usr/lib/mono/4.7.2-api
+          mono tests/bin/SetupTests.exe
+
+      - name: Checksums
+        run: cd dist && sha256sum ManagerAgent-Setup.exe ManagerAgent.dll | tee SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManagerAgent-${{ github.sha }}
+          path: dist/
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/ManagerAgent-Setup.exe dist/SHA256SUMS.txt \
+            --title "Manager Agent ${GITHUB_REF_NAME#v}" \
+            --notes "Download **ManagerAgent-Setup.exe** and run it. Built automatically from this tag by GitHub Actions; checksums in SHA256SUMS.txt."
