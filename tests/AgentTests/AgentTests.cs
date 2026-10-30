@@ -25,6 +25,9 @@ internal static class AgentTests
         public List<AgentDuty> Duties = new();
         public int Attentions, TermsShown, Dumps;
         public void DumpUi(string reason) { Dumps++; Console.WriteLine("      (dump requested: " + reason + ")"); }
+        public int Saves;
+        public string LastSaved;
+        public void SaveScreen(ScreenModel screen, string reason) { Saves++; LastSaved = screen.ToDump(); Console.WriteLine("      (screen saved: " + reason + ")"); }
         public Host(FakeFm fm, string name)
         {
             Fm = fm;
@@ -569,7 +572,7 @@ internal static class AgentTests
                      ("only real mouse clicks work", f => f.WorkingMethod = 2),
                  })
         {
-            var (fm, h, n) = Contract("fm27-" + label.Split(' ')[0] + label.Length, f => { f.SalaryMode = "fm27"; f.C.Max = 2100; f.C.WalkAway = 1600; tweak(f); },
+            var (fm, h, n) = Contract("fm27-" + label.Split(' ')[0] + label.Length, f => { f.SalaryMode = "fm27"; f.EscapeLeavesContract = true; f.C.Max = 2100; f.C.WalkAway = 1600; tweak(f); },
                 d => SetRange(d, 900, 1800));
             var list = fm.Fm27SalaryList();
             n.Start();
@@ -579,6 +582,27 @@ internal static class AgentTests
             Check($"FM27 salary box ({label}): reaches a deal, list closed, no keys sent blind",
                 n.Choice?.Title == "Deal ready" && fm.Offer.Wage >= 1400 && fm.Offer.Wage <= 1800 && fm.Popup == null && stray.Count == 0,
                 $"{n.Choice?.Title} {fm.Offer} popup={fm.Popup} {string.Join(",", stray)}");
+            Check($"FM27 salary box ({label}): never presses Escape (FM27 may leave the screen on it)", !fm.Events.Contains("escape") && fm.Page == "contract",
+                string.Join(" | ", fm.Events.Where(e => e.Contains("escape") || e.Contains("left"))));
+        }
+        {
+            var (fm, h, n) = Contract("fm27-length-dead", f => { f.SalaryMode = "fm27"; f.EscapeLeavesContract = true; f.LengthItemsDead = true; f.C.Max = 2100; f.C.WalkAway = 1600; },
+                d => SetRange(d, 900, 1800));
+            n.Start();
+            h.Run(() => n.Choice != null || !n.IsRunning, 600);
+            Check("Contract length entries don't respond → keeps the length, still negotiates the salary to a deal, screen stays open",
+                fm.Page == "contract" && fm.Suggestions > 0 && fm.Offer.Wage >= 1400 && n.Choice?.Title == "Deal ready" && fm.Popup == null && !fm.Events.Contains("escape"),
+                $"page={fm.Page} suggestions={fm.Suggestions} {fm.Offer} choice={n.Choice?.Title} popup={fm.Popup} status={n.Status}");
+            Check("…and saves one troubleshooting dump about it", h.Dumps == 1, h.Dumps.ToString());
+        }
+        {
+            var (fm, h, n) = Contract("fm27-leaves", f => { f.SalaryMode = "fm27"; f.LeaveOnLengthOpen = true; f.C.Max = 2100; f.C.WalkAway = 1600; },
+                d => SetRange(d, 900, 1800));
+            n.Start();
+            h.Run(() => !n.IsRunning && n.Choice == null, 300);
+            Check("Contract screen closes mid-negotiation → saves the last screen and says what it was doing",
+                h.Saves == 1 && h.LastSaved.Contains("Contract Length") && n.Status.Length > 0 && AgentLog.Recent.Any(l => l.Contains("while I was choosing the contract length")),
+                $"saves={h.Saves} status={n.Status}");
         }
         {
             var (fm, h, n) = Contract("fm27-above", f => { f.SalaryMode = "fm27"; f.C.Max = 2100; f.C.WalkAway = 2000; }, d => SetRange(d, 2500, 3000));

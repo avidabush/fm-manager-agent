@@ -105,6 +105,8 @@ internal interface IAgentHost
     void ShowTerms();
     /// <summary>Saves a UI dump for troubleshooting (once something looks wrong).</summary>
     void DumpUi(string reason);
+    /// <summary>Saves an earlier snapshot of the screen (e.g. the last one before a screen closed).</summary>
+    void SaveScreen(ScreenModel screen, string reason);
     /// <summary>True while another duty is in the middle of something.</summary>
     bool OtherDutyBusy(AgentDuty me);
 }

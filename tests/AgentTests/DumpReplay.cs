@@ -42,7 +42,8 @@ internal static class DumpReplay
                 Enabled = !disabled,
                 Parent = parent.node?.Id ?? -1,
             };
-            n.IsScroll = n.Type.Contains("ScrollView");
+            n.IsScroll = n.Type.Contains("ScrollView") || cls.Contains("agent-scroll");
+            if (cls.Contains("agent-field")) { n.IsField = true; n.FieldValue = n.Text; n.Text = null; }
             n.Click = n.Clickable ? n.Id : parent.node == null ? -1 : parent.node.Click;
             if (first) { s.Width = n.W; s.Height = n.H; first = false; }
             s.Nodes.Add(n);
@@ -59,6 +60,8 @@ internal static class DumpReplay
         var t = new GameText();
         Console.WriteLine($"{Path.GetFileName(path)}: {s.Nodes.Count} elements, UI {s.Width}x{s.Height}");
         Console.WriteLine($"  jobs page showing: {JobsPage.IsShowing(s, t)}");
+        var cs = ContractScreen.Read(s, t, AgentData.DefaultClauses);
+        Console.WriteLine($"  contract screen: {(cs == null ? "no" : $"club \"{cs.Club}\", wage {cs.Wage} (box {(cs.SalaryField != null ? "yes" : "no")}), years {cs.Years}, length control {cs.LengthValue}, clauses [{string.Join(", ", cs.Clauses)}], suggest {cs.Suggest != null}, finalize {cs.Finalize != null}")}");
         var all = s.Button(t.ApplyForAllJobs);
         Console.WriteLine($"  \"{t.ApplyForAllJobs}\" button: {(all == null ? "NOT FOUND" : all.ToString())}");
         var single = s.Button(t.ApplyForJob);

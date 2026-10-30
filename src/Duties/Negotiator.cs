@@ -18,6 +18,12 @@ internal sealed class Negotiator : AgentDuty
     private double? _clubMax;
     /// <summary>FM27: the salary is always a type-in box (FM26-style screens show it only while you edit).</summary>
     private bool _fieldAlways;
+    /// <summary>The contract length couldn't be changed in these talks: don't keep trying every round.</summary>
+    private bool _lengthStuck;
+    /// <summary>What the agent is doing right now (for the log and troubleshooting files).</summary>
+    private string _step = "";
+    private bool _savedThisTalk;
+    private ScreenModel _lastContractScreen;
 
     public Negotiator(IAgentHost host) : base(host) { }
 
@@ -64,6 +70,7 @@ internal sealed class Negotiator : AgentDuty
         }
 
         bool on = _cs != null;
+        if (on) _lastContractScreen = s;
         if (on && !_onScreen)
         {
             _club = _cs.Club;
@@ -77,7 +84,9 @@ internal sealed class Negotiator : AgentDuty
             _handledClub = null;
             if (Runner.Active && !_finalizing)
             {
-                Stop("the contract screen closed (the club may have ended talks)");
+                if (_lastContractScreen != null)
+                    Host.SaveScreen(_lastContractScreen, "the contract screen closed while I was " + (_step.Length > 0 ? _step : "negotiating"));
+                Stop("the contract screen closed while I was " + (_step.Length > 0 ? _step : "negotiating") + " (the club may have ended talks)");
                 _status = "The contract screen closed — the club may have ended talks.";
             }
             else if (!_finalizing && _status.StartsWith("Offer from")) _status = "";
@@ -155,6 +164,9 @@ internal sealed class Negotiator : AgentDuty
         _club = Or(cs.Club, "the club");
         _handledClub = _club;
         _fieldAlways = cs.SalaryField != null;
+        _lengthStuck = false;
+        _savedThisTalk = false;
+        _step = "";
         RememberStyle(cs);
         var initial = cs.Terms;
         _lastSeen = initial;
@@ -177,7 +189,9 @@ internal sealed class Negotiator : AgentDuty
         // 2. The club's maximum salary.
         _status = "Checking the club's maximum salary…";
         var mr = new Result();
+        _step = "checking the club's maximum salary";
         foreach (var w in ProbeMax(mr)) yield return w;
+        _step = "";
         if (mr.Ok)
         {
             _clubMax = mr.Value;
@@ -370,18 +384,28 @@ internal sealed class Negotiator : AgentDuty
         var r = new Result();
 
         // Length first: some clauses only unlock on longer contracts.
-        if (cs.Years == null || Math.Abs(cs.Years.Value - target.Years) > 0.01)
+        if (!_lengthStuck && (cs.Years == null || Math.Abs(cs.Years.Value - target.Years) > 0.01))
         {
+            _step = "choosing the contract length";
             foreach (var w in SetYears(target.Years, r)) yield return w;
-            if (!r.Ok) { res.Error = "I couldn't change the contract length: " + r.Error; yield break; }
-            actual.Years = r.Value;
+            if (r.Ok) actual.Years = r.Value;
+            else
+            {
+                _lengthStuck = true;
+                actual.Years = Read()?.Years ?? cs.Years ?? target.Years;
+                AgentLog.Warn($"I couldn't change the contract length ({r.Error}) — keeping {actual.Years.Format()} and carrying on with the salary.");
+            }
+            if (Read() == null) { res.Error = "The contract screen closed."; yield break; }
         }
+        else if (_lengthStuck && cs.Years.HasValue) actual.Years = cs.Years.Value;
 
         cs = Read();
         double tol = Math.Max(1, target.Wage * 0.002);
         if (cs?.Wage == null || Math.Abs(cs.Wage.Value - target.Wage) > tol)
         {
+            _step = "setting the salary";
             foreach (var w in SetWage(target.Wage, r)) yield return w;
+            if (!r.Ok) Troubleshoot("couldn't set the salary: " + r.Error);
             if (!r.Ok) { res.Error = "I couldn't change the salary: " + r.Error; yield break; }
             actual.Wage = r.Value;
             if (r.Value < target.Wage - tol)
@@ -397,6 +421,7 @@ internal sealed class Negotiator : AgentDuty
             cs = Read();
             if (cs == null) { res.Error = "The contract screen closed."; yield break; }
             if (cs.Clauses.Any(c => ClauseNames.Same(c, clause))) continue;
+            _step = "adding " + clause;
             foreach (var w in AddClause(clause, r)) yield return w;
             if (!r.Ok)
             {
@@ -410,6 +435,7 @@ internal sealed class Negotiator : AgentDuty
         foreach (var clause in cs?.Clauses.ToList() ?? new List<string>())
         {
             if (target.Has(clause)) continue;
+            _step = "removing " + clause;
             foreach (var w in RemoveClause(clause, r)) yield return w;
             if (!r.Ok) { res.Error = $"I couldn't remove {clause}: {r.Error}"; yield break; }
         }
@@ -417,7 +443,28 @@ internal sealed class Negotiator : AgentDuty
         cs = Read();
         if (cs != null) actual.Clauses = cs.Clauses.ToList();
         planner.Proposed(actual);
+        _step = "";
         res.Ok = true;
+    }
+
+    /// <summary>Saves the screen once per negotiation when a step fails (before anything is closed).</summary>
+    private void Troubleshoot(string what)
+    {
+        AgentLog.Info("Contract: " + what, panel: false);
+        if (_savedThisTalk) return;
+        _savedThisTalk = true;
+        Host.DumpUi("contract screen: " + what);
+    }
+
+    /// <summary>
+    /// What to press for an entry of a list: the clickable around it if that's a tight fit,
+    /// otherwise the text itself (a big container would be a click somewhere else entirely).
+    /// </summary>
+    private static UiNode PressTarget(ScreenModel s, UiNode text)
+    {
+        var c = s.ClickableOf(text);
+        if (c != null && c.H <= Math.Max(70, text.H * 3) && c.W <= Math.Max(700, text.W * 3)) return c;
+        return text;
     }
 
     // --- wage
@@ -485,7 +532,7 @@ internal sealed class Negotiator : AgentDuty
                 var pickKey = ScreenModel.KeyOf(pick);
                 var keys = ScreenModel.Keys(items);
                 var pr = new Result();
-                foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(s.ClickableOf).FirstOrDefault(c => c != null),
+                foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(n => PressTarget(s, n)).FirstOrDefault(),
                              s => !s.AnyOf(keys), pick.Text, pr, 1.5))
                     yield return w;
             }
@@ -510,21 +557,21 @@ internal sealed class Negotiator : AgentDuty
     }
 
     /// <summary>
-    /// Closes the salary list. With an always-there salary box: leave the box holding <paramref name="keep"/>
-    /// first (Escape would undo what was typed); otherwise Escape first. Clicking the salary again last.
+    /// Closes the salary list without Escape (FM27 may treat Escape as "leave this screen"):
+    /// leave the salary box holding <paramref name="keep"/>, or click the salary again.
     /// </summary>
     private IEnumerable<Wait> CloseSalaryList(ScreenModel before, double keep)
     {
         bool Open(ScreenModel s) => MoneyItems(s, before, Read(s)).Count >= 2;
-        for (int step = 0; step < 3 && Open(Game.Screen); step++)
+        for (int step = 0; step < 2 && Open(Game.Screen); step++)
         {
             bool tried;
-            var how = _fieldAlways ? step : step == 0 ? 1 : step == 1 ? 0 : 2;
-            if (how == 0) { var f = Read()?.SalaryField; tried = f != null && Game.SetField(f, Money.Digits(keep), out _); }
-            else if (how == 1) tried = Game.Key(GameKey.Escape);
+            bool viaField = _fieldAlways ? step == 0 : step == 1;
+            if (viaField) { var f = Read()?.SalaryField; tried = f != null && Game.SetField(f, Money.Digits(keep), out _); }
             else { var o = Read()?.SalaryValue; tried = o != null && Game.Press(o, 0, out _); }
             if (tried) yield return Wait.Until(Game, x => !Open(x), 1.0);
         }
+        if (Open(Game.Screen)) Troubleshoot("the salary list didn't close");
     }
 
     private IEnumerable<Wait> StepWage(double value, Result r)
@@ -617,7 +664,7 @@ internal sealed class Negotiator : AgentDuty
             if (Game.SetField(cs.SalaryField, digits, out _)) yield return Wait.Until(Game, Changed, 1.5);
             if (!Changed(Game.Screen) && Editing(Read()) && Game.Type(digits, true, true))
                 yield return Wait.Until(Game, Changed, 2.5);
-            if (Editing(Read())) { Game.Key(GameKey.Escape); yield return Wait.Fresh(Game, 0.3); }
+            if (Editing(Read())) { Game.Key(GameKey.Enter); yield return Wait.Fresh(Game, 0.3); }
             yield return Fresh();
             var shown = Read()?.Wage;
             if (shown.HasValue && shown.Value < huge * 0.5 && Math.Abs(shown.Value - original) > 0.5)
@@ -645,18 +692,27 @@ internal sealed class Negotiator : AgentDuty
         return null;
     }
 
-    private IEnumerable<Wait> ClosePopup(Func<ScreenModel, bool> isOpen, Func<ScreenModel, UiNode> opener)
+    /// <summary>
+    /// Closes a list without Escape (FM27 may treat Escape as "leave this screen"): click what opened it
+    /// again, then (if given) an entry that changes nothing.
+    /// </summary>
+    private IEnumerable<Wait> ClosePopup(Func<ScreenModel, bool> isOpen, Func<ScreenModel, UiNode> opener, Func<ScreenModel, UiNode> harmless = null)
     {
         if (!isOpen(Game.Screen)) yield break;
-        if (Game.Key(GameKey.Escape))
+        var o = opener(Game.Screen);
+        if (o != null && Game.Press(o, 0, out _))
         {
             var w = Wait.Until(Game, s => !isOpen(s), 1.0);
             yield return w;
             if (!w.TimedOut) yield break;
         }
-        var o = opener(Game.Screen);
-        if (o != null && Game.Press(o, 0, out _))
-            yield return Wait.Until(Game, s => !isOpen(s), 1.0);
+        var h = harmless?.Invoke(Game.Screen);
+        if (h != null)
+        {
+            var r = new Result();
+            foreach (var w in PressUntil(harmless, s => !isOpen(s), "an entry that changes nothing", r, 1.0)) yield return w;
+        }
+        if (isOpen(Game.Screen)) AgentLog.Info("Contract: a list I opened didn't close.", panel: false);
     }
 
     // --- length
@@ -671,22 +727,33 @@ internal sealed class Negotiator : AgentDuty
             return s.NewTexts(before).Where(n => YearsText.Parse(n.Text) != null && (display == null || !s.IsInside(n, display))).ToList();
         }
 
+        double? current = Read()?.Years;
         var open = new Result();
         foreach (var w in PressUntil(s => Read(s)?.LengthValue, s => Items(s).Count > 0, "Contract Length", open, 1.5))
             yield return w;
-        if (!open.Ok) { r.Error = open.Error; yield break; }
+        if (!open.Ok) { r.Error = open.Error; Troubleshoot("the contract length list didn't open (" + open.Error + ")"); yield break; }
 
         var options = Items(Game.Screen);
         var keys = ScreenModel.Keys(options);
         var pick = options.OrderBy(i => Math.Abs(YearsText.Parse(i.Text).Value - years)).ThenByDescending(i => YearsText.Parse(i.Text).Value).First();
         double pickYears = YearsText.Parse(pick.Text).Value;
         var pickKey = ScreenModel.KeyOf(pick);
-        foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(s.ClickableOf).FirstOrDefault(c => c != null),
+        AgentLog.Info($"Contract length: list opened ({options.Count} options); choosing \"{pick.Text}\" [{Game.Screen.ClickableOf(pick)?.ToString() ?? "no clickable"}].", panel: false);
+        foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(n => PressTarget(s, n)).FirstOrDefault(),
                      s => { var c = Read(s); return c?.Years != null && Math.Abs(c.Years.Value - pickYears) < 0.01 && !s.AnyOf(keys); },
                      pick.Text, r, 2.0))
             yield return w;
         r.Value = pickYears;
-        if (!r.Ok) foreach (var w in ClosePopup(s => s.AnyOf(keys), s => Read(s)?.LengthValue)) yield return w;
+        if (r.Ok) { AgentLog.Info($"Contract length set to {pickYears.Format()} ({r.How}).", panel: false); yield break; }
+
+        // Did it change but the list stayed open?
+        var now = Read();
+        if (now?.Years != null && Math.Abs(now.Years.Value - pickYears) < 0.01) r.Ok = true;
+        else Troubleshoot($"choosing \"{pick.Text}\" didn't change the contract length ({r.Error})");
+        UiNode Harmless(ScreenModel s) => current == null ? null :
+            s.Texts.Where(n => keys.Contains(ScreenModel.KeyOf(n)) && YearsText.Parse(n.Text) is double y && Math.Abs(y - (r.Ok ? pickYears : current.Value)) < 0.01)
+                .Select(n => PressTarget(s, n)).FirstOrDefault();
+        foreach (var w in ClosePopup(s => s.AnyOf(keys), s => Read(s)?.LengthValue, Harmless)) yield return w;
     }
 
     // --- clauses
@@ -700,7 +767,7 @@ internal sealed class Negotiator : AgentDuty
         var open = new Result();
         foreach (var w in PressUntil(s => Read(s)?.AddClause, s => Items(s).Count > 0, "Add Clause", open, 1.5))
             yield return w;
-        if (!open.Ok) { r.Error = "the Add Clause list didn't open"; yield break; }
+        if (!open.Ok) { r.Error = "the Add Clause list didn't open"; Troubleshoot(r.Error); yield break; }
 
         var items = Items(Game.Screen);
         var keys = ScreenModel.Keys(items);
@@ -714,12 +781,13 @@ internal sealed class Negotiator : AgentDuty
             yield break;
         }
         var itemKey = ScreenModel.KeyOf(item);
-        foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == itemKey).Select(s.ClickableOf).FirstOrDefault(c => c != null),
+        foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == itemKey).Select(n => PressTarget(s, n)).FirstOrDefault(),
                      s => !s.AnyOf(keys) && Read(s)?.Clauses.Any(c => ClauseNames.Same(c, name)) == true,
                      name, r, 2.0))
             yield return w;
         if (!r.Ok)
         {
+            Troubleshoot($"choosing \"{name}\" didn't add it ({r.Error})");
             r.Error = "couldn't add it";
             foreach (var w in ClosePopup(s => s.AnyOf(keys), s => Read(s)?.AddClause)) yield return w;
         }

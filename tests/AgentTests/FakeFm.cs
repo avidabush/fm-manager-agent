@@ -72,6 +72,9 @@ internal sealed class FakeFm : IGame
     public string Chat = "Here is our initial offer:";
     public string SalaryMode = "field";   // field | list | buttons | fm27 (always a type-in box; clicking it also opens a list)
     public bool LongSalaryList;           // fm27: the list is longer than its box and scrolls
+    public bool EscapeLeavesContract;     // Escape on the contract screen leaves it (suspected in FM27)
+    public bool LengthItemsDead;          // the contract length entries ignore presses
+    public bool LeaveOnLengthOpen;        // opening the contract length list closes the contract screen
     public float SalaryListScroll;
     public bool ClampToMax = true;
     public bool Editing;
@@ -123,6 +126,7 @@ internal sealed class FakeFm : IGame
         if (attempt < 0 || attempt >= PressMethods) return false;
         Presses++;
         if (attempt != WorkingMethod) return true; // pressed, but the game ignores this method
+        if (SalaryMode == "fm27" && node.Type != "TextField" && node.Handle is Action) Editing = false; // clicking anything else takes focus from the box
         if (node.Handle is Action a) { a(); Rebuild(); }
         return true;
     }
@@ -155,7 +159,12 @@ internal sealed class FakeFm : IGame
 
     public bool Key(GameKey key)
     {
-        if (key == GameKey.Escape) { Popup = null; Editing = false; }
+        if (key == GameKey.Escape)
+        {
+            Events.Add("escape");
+            if (Page == "contract" && EscapeLeavesContract) { Page = "portal"; Events.Add("left the contract screen"); }
+            Popup = null; Editing = false;
+        }
         if (key == GameKey.Enter)
         {
             if (Editing) CommitSalary(FieldText);
@@ -449,7 +458,7 @@ internal sealed class FakeFm : IGame
             var f = Add(null, 1208, 256, 170, 36, () =>
             {
                 if (!Editing) { Editing = true; FieldText = Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture); }
-                Popup = "salary";
+                Popup = Popup == "salary" ? null : "salary"; // clicking the box again closes its list
             });
             f.IsField = true; f.Type = "TextField"; f.FieldValue = shown;
             _parents.Push(f.Id);
@@ -476,7 +485,11 @@ internal sealed class FakeFm : IGame
         Button("Immediate - 6/18/2026", 1248, 299, 210, 36, () => { });
 
         Add("Contract Length", 505, 350, 126, 20);
-        Button(YearsLabel(Offer.Years), 1216, 342, 242, 36, () => Popup = Popup == "length" ? null : "length");
+        Button(YearsLabel(Offer.Years), 1216, 342, 242, 36, () =>
+        {
+            if (LeaveOnLengthOpen) { Page = "portal"; Events.Add("left the contract screen"); return; }
+            Popup = Popup == "length" ? null : "length";
+        });
 
         Add("Bonuses & Clauses", 424, 437, 145, 20);
         Button("Add Bonus", 1154, 420, 158, 36, () => { });
@@ -520,7 +533,7 @@ internal sealed class FakeFm : IGame
             for (int y = 1; y <= 5; y++)
             {
                 int captured = y;
-                Button(YearsLabel(y), 1216, 385 + (y - 1) * 34, 242, 32, () => { Offer.Years = captured; Popup = null; });
+                Button(YearsLabel(y), 1216, 385 + (y - 1) * 34, 242, 32, () => { if (LengthItemsDead) return; Offer.Years = captured; Popup = null; });
             }
         }
         else if (Popup == "salary" && SalaryMode == "fm27")

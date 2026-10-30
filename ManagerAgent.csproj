@@ -15,7 +15,7 @@
     <TargetFramework>net6.0</TargetFramework>
     <AssemblyName>ManagerAgent</AssemblyName>
     <RootNamespace>ManagerAgent</RootNamespace>
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

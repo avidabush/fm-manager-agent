@@ -107,7 +107,8 @@ Your wage range, clauses and job filters are set in the panel and saved in `BepI
 
 - **Setup can't download BepInEx:** click the link Setup shows, download the file whose name starts with `BepInEx-Unity.IL2CPP-win-x64`, put it next to `ManagerAgent-Setup.exe`, and click **Try again**.
 - **Setup asks for administrator permission:** this happens when the game is in a protected folder. Click Yes.
-- **The agent doesn't apply, or can't set the salary/length:** with that screen open, press **Dump UI** in the panel, then **Open dumps folder** to find the file (it's in `BepInEx\config\ManagerAgent\dumps` inside the game folder; the log also shows the full path). Set `VerboseLog = true` in the cfg, try again, and send the dump plus `BepInEx\LogOutput.log`.
+- **The agent doesn't apply, or can't set the salary/length:** with that screen open, press **Dump UI** in the panel, then **Open dumps folder** to find the file (it's in `BepInEx\config\ManagerAgent\dumps` inside the game folder; the log also shows the full path). To capture a list while it's open (the panel button would close it), press **Ctrl+Shift+U** instead. Set `VerboseLog = true` in the cfg, try again, and send the dump plus `BepInEx\LogOutput.log` (BepInEx starts that log fresh every time the game launches, so send it before restarting).
+- **Troubleshooting files the agent saves by itself** (same dumps folder): `ui-….txt` when a screen looks odd or a contract step fails, and `screen-….txt` (its view of the last contract screen) when the contract screen closes in the middle of a negotiation. Every file has the date and time in its name; nothing is overwritten.
 - **It presses things too slowly or not at all:** the log says which press method worked. Put that one first in `ClickStrategies`.
 
 ## FM27 (out November 10)
@@ -120,7 +121,7 @@ Run Setup and choose *Football Manager 27*. It installs and checks the same way,
 |---|---|
 | `BepInEx\config\com.manageragent.fm.cfg` | settings, hotkeys and game texts |
 | `BepInEx\config\ManagerAgent\agent.json` | your wage range, clauses, job filters and applications |
-| `BepInEx\config\ManagerAgent\dumps\` | UI dumps |
+| `BepInEx\config\ManagerAgent\dumps\` | UI dumps and screen snapshots (troubleshooting) |
 
 ## How it's put together (for adding duties)
 

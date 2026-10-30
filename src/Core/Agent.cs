@@ -96,6 +96,22 @@ internal sealed class Agent : IAgentHost
 
     public void DumpUi() => DumpUi(null);
 
+    public void SaveScreen(ScreenModel screen, string reason)
+    {
+        try
+        {
+            var path = System.IO.Path.Combine(AgentPaths.DumpDir, $"screen-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var head = $"Manager Agent screen snapshot — {DateTime.Now:yyyy-MM-dd HH:mm:ss}\nWhy: {reason}\n" +
+                       "Format: Type #name .classes [x,y WxH] \"text\" (the agent's own view of the screen)\n\n=== Snapshot ===\n";
+            System.IO.File.WriteAllText(path, head + screen.ToDump());
+            AgentLog.Warn($"Saved the screen for troubleshooting — {reason}: {path}");
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Warn("Saving the screen failed: " + ex.Message);
+        }
+    }
+
     public void OpenDumpsFolder()
     {
         try { System.Diagnostics.Process.Start("explorer.exe", "\"" + AgentPaths.DumpDir + "\""); }

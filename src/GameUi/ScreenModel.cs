@@ -105,6 +105,34 @@ internal sealed class ScreenModel
     public IEnumerable<UiNode> ClickablesInBand(float y0, float y1, float xMin = float.MinValue, float xMax = float.MaxValue) =>
         Nodes.Where(t => t.Clickable && t.CY >= y0 && t.CY <= y1 && t.CX >= xMin && t.CX <= xMax);
 
+    /// <summary>
+    /// This snapshot as text, in the UI dump format (so <c>AgentTests --replay</c> reads it too).
+    /// Fields are marked <c>.agent-field</c> with their value as text; disabled elements <c>.disabled</c>.
+    /// </summary>
+    public string ToDump()
+    {
+        var sb = new System.Text.StringBuilder();
+        var depth = new int[Nodes.Count];
+        foreach (var n in Nodes)
+        {
+            int d = n.Parent >= 0 && n.Parent < n.Id ? depth[n.Parent] + 1 : 0;
+            depth[n.Id] = d;
+            sb.Append(' ', Math.Min(d, 60) * 2).Append(string.IsNullOrEmpty(n.Type) ? "Node" : n.Type);
+            if (!string.IsNullOrEmpty(n.Name)) sb.Append(" #").Append(n.Name.Replace(' ', '_'));
+            var cls = new List<string>();
+            if (n.IsField) cls.Add("agent-field");
+            if (n.IsScroll) cls.Add("agent-scroll");
+            if (!n.Enabled) cls.Add("disabled");
+            if (cls.Count > 0) sb.Append(" .").Append(string.Join(".", cls));
+            sb.Append(System.FormattableString.Invariant($"  [{n.X:0},{n.Y:0} {n.W:0}x{n.H:0}]"));
+            if (n.Clickable) sb.Append("  (clickable)");
+            var t = n.IsField ? n.FieldValue : n.Text;
+            if (!string.IsNullOrEmpty(t)) sb.Append("  \"").Append(t.Replace('\n', ' ')).Append('"');
+            sb.Append('\n');
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Smallest node containing a point (for "what did the user click").</summary>
     public UiNode At(float x, float y, Func<UiNode, bool> where = null) =>
         Nodes.Where(n => n.W > 0 && n.Contains(x, y) && (where == null || where(n))).OrderBy(n => n.W * n.H).FirstOrDefault();
