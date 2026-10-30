@@ -56,7 +56,12 @@ internal sealed class JobFilter
 /// <summary>Reads the "Available Jobs" page from a screen snapshot.</summary>
 internal static class JobsPage
 {
-    public static bool IsShowing(ScreenModel s, GameText t) => Title(s, t) != null && s.Text(t.ApplyForJob) != null;
+    /// <summary>
+    /// The jobs page: an "N Available Jobs" title plus something only that page has (the apply buttons or the
+    /// "Club Rating" column). Your home screen has its own "0 Available Jobs" widget, without those.
+    /// </summary>
+    public static bool IsShowing(ScreenModel s, GameText t) =>
+        Title(s, t) != null && (s.Text(t.ApplyForJob) != null || s.Text(t.ApplyForAllJobs) != null || s.Text(t.ColRating) != null);
 
     public static UiNode Title(ScreenModel s, GameText t)
     {
@@ -104,14 +109,24 @@ internal static class JobsPage
         tableLeft = tableRight = headerBottom = 0;
         var rows = new List<JobRow>();
 
-        var team = s.Text(t.ColTeam);
-        var rating = s.Text(t.ColRating, n => team == null || Math.Abs(n.CY - team.CY) < 20);
-        if (team == null || rating == null) return rows;
+        // FM27 keeps the screen underneath loaded (your home screen has its own vacancies widget with a
+        // "Team" column, and the Messages list). Only the jobs page's own container counts: the one holding
+        // the "Club Rating" header, which only the real jobs table has.
+        var rating = s.Text(t.ColRating);
+        if (rating == null) return rows;
+        var page = s.RootOf(rating);
+        HashSet<int> inPage = null;
+        if (page != null && page.Id != rating.Id && page.W > 400 && page.H > 300)
+            inPage = new HashSet<int>(s.Nodes.Where(n => s.IsInside(n, page)).Select(n => n.Id));
+        bool In(UiNode n) => inPage == null || inPage.Contains(n.Id);
+
+        var team = s.Text(t.ColTeam, n => In(n) && Math.Abs(n.CY - rating.CY) < 20);
+        if (team == null) return rows;
         float hy = team.CY;
         var headers = new List<(string col, UiNode n)>();
         void H(string col, string labels)
         {
-            var n = s.Text(labels, x => Math.Abs(x.CY - hy) < 20);
+            var n = s.Text(labels, x => In(x) && Math.Abs(x.CY - hy) < 20);
             if (n != null) headers.Add((col, n));
         }
         H("coach", t.ColCoach); H("team", t.ColTeam); H("rating", t.ColRating); H("nation", t.ColNation);
@@ -126,7 +141,7 @@ internal static class JobsPage
 
         // Row anchors: one club-rating word per row (prefer the ones under the Club Rating header;
         // otherwise the column of rating words — ignoring strays such as the job panel's "Reputation").
-        var ratingWords = s.Texts.Where(n => n.CY > hb + 4 && n.CX > tl && n.CX < tr && ParseRating(n.Text, t) != ClubRating.Unknown).ToList();
+        var ratingWords = s.Texts.Where(n => In(n) && n.CY > hb + 4 && n.CX > tl && n.CX < tr && ParseRating(n.Text, t) != ClubRating.Unknown).ToList();
         var underHeader = ratingWords.Where(n => n.CX >= rating.X - 40 && n.X <= rating.Right + 160).ToList();
         var anchors = underHeader.Count > 0 ? underHeader : ratingWords;
         if (anchors.Count > 2)
@@ -145,7 +160,7 @@ internal static class JobsPage
             if (diffs.Count > 0) pitch = diffs[diffs.Count / 2];
         }
 
-        UiNode RowElement(UiNode a) => s.Nodes.Where(n => n.Clickable && n.Contains(a.CX, a.CY) && n.W >= tableWidth * 0.5f && n.H < pitch * 1.8f)
+        UiNode RowElement(UiNode a) => s.Nodes.Where(n => n.Clickable && In(n) && n.Contains(a.CX, a.CY) && n.W >= tableWidth * 0.5f && n.H < pitch * 1.8f)
             .OrderBy(n => n.W * n.H).FirstOrDefault();
 
         // The rows' own edges are more reliable than the headers' when the rows are real elements.
@@ -165,7 +180,7 @@ internal static class JobsPage
             lastBottom = bottom;
 
             var r = new JobRow { Top = top, BottomY = bottom, Rating = ParseRating(a.Text, t) };
-            var cells = s.TextsInBand(top + 1, bottom - 1, tl, tr).Where(c => c.Id != a.Id).ToList();
+            var cells = s.TextsInBand(top + 1, bottom - 1, tl, tr).Where(c => c.Id != a.Id && In(c)).ToList();
 
             // Left of the rating: coach, club, league.
             var left = cells.Where(c => c.CX < a.X).Select(c => (c, k: Classify(c.Text, t))).ToList();

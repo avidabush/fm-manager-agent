@@ -46,6 +46,7 @@ internal sealed class FakeFm : IGame
     public bool RowsClickable = true;
     public bool NoScrollView;       // the list scrolls, but isn't a recognisable scroll view
     public float HeaderShift;       // header texts don't line up with the cells
+    public bool PortalUnderneath;   // FM27: your home screen (Messages, a vacancies widget) stays loaded under the jobs page
     public bool ConfirmOnSingleApply = true;
     public bool ConfirmOnApplyAll = true;
     public bool OtherConfirmWording;  // "Apply For All Jobs" box with Apply / Cancel instead of "Please Confirm" Yes / No
@@ -70,10 +71,12 @@ internal sealed class FakeFm : IGame
     public int Suggestions;
     public bool TalksEnded, Signed;
     public string Chat = "Here is our initial offer:";
-    public string SalaryMode = "field";   // field | list | buttons | fm27 (always a type-in box; clicking it also opens a list)
+    public string SalaryMode = "field";   // field | list | buttons | fm27 ("$725 p/w" button → number box + list; the box stays after focus leaves)
     public bool LongSalaryList;           // fm27: the list is longer than its box and scrolls
     public bool EscapeLeavesContract;     // Escape on the contract screen leaves it (suspected in FM27)
     public bool LengthItemsDead;          // the contract length entries ignore presses
+    public bool BoxFocus;                 // fm27: keyboard focus is in the salary box
+    public bool FocusUnknown;             // the agent can't tell where the keyboard focus is
     public bool LeaveOnLengthOpen;        // opening the contract length list closes the contract screen
     public float SalaryListScroll;
     public bool ClampToMax = true;
@@ -126,7 +129,12 @@ internal sealed class FakeFm : IGame
         if (attempt < 0 || attempt >= PressMethods) return false;
         Presses++;
         if (attempt != WorkingMethod) return true; // pressed, but the game ignores this method
-        if (SalaryMode == "fm27" && node.Type != "TextField" && node.Handle is Action) Editing = false; // clicking anything else takes focus from the box
+        if (SalaryMode == "fm27" && node.Type != "SILongField" && node.Handle is Action)
+        {
+            // Clicking anything else: the box loses focus (taking what was typed) but keeps showing; the list closes.
+            if (BoxFocus) { BoxFocus = false; CommitSalary(FieldText); Editing = true; }
+            if (Popup == "salary" && node.Type != "DropdownRow") Popup = null;
+        }
         if (node.Handle is Action a) { a(); Rebuild(); }
         return true;
     }
@@ -134,23 +142,51 @@ internal sealed class FakeFm : IGame
     public bool SetField(UiNode field, string text, out string how)
     {
         how = "field value";
-        if (!FieldSettable || (!Editing && SalaryMode != "fm27")) return false;
-        CommitSalary(text);
-        if (SalaryMode == "fm27" && Popup == "salary") Popup = null; // leaving the box closes its list
+        if (!FieldSettable || !Editing) return false;
+        if (SalaryMode == "fm27")
+        {
+            // Value set, then blurred: the game takes it; the box keeps showing it.
+            if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) SetWage(v);
+            FieldText = Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture);
+            BoxFocus = false;
+        }
+        else CommitSalary(text);
+        Rebuild();
+        return true;
+    }
+
+    private bool Focused => SalaryMode == "fm27" ? BoxFocus : Editing;
+
+    public bool FieldFocused(UiNode field) => !FocusUnknown && Focused;
+
+    public bool ClickAside(UiNode spot, out string how)
+    {
+        how = "mouse";
+        Events.Add("click aside");
+        if (Popup == "salary" || Popup == "length" || Popup == "clause") Popup = null;
+        if (SalaryMode == "fm27") { if (BoxFocus) { BoxFocus = false; CommitSalary(FieldText); Editing = true; } }
+        else if (Editing) CommitSalary(FieldText);
         Rebuild();
         return true;
     }
 
     public bool Type(string text, bool selectAllFirst, bool pressEnter)
     {
-        if (!Editing) { Events.Add("stray typing"); return true; }  // keys sent with nothing focused
+        if (!Focused)
+        {
+            // Keys with nothing focused are FM shortcuts (Backspace = Back): you'd leave the screen.
+            Events.Add("stray typing");
+            if (Page == "contract") { Page = "portal"; Events.Add("left the contract screen"); }
+            Rebuild();
+            return true;
+        }
         if (KeyboardWorks)
         {
             FieldText = selectAllFirst ? text : FieldText + text;
             if (pressEnter)
             {
                 CommitSalary(FieldText);
-                if (SalaryMode == "fm27") Editing = true; // FM27 keeps the box focused (and its list open)
+                if (SalaryMode == "fm27") { Editing = true; BoxFocus = false; Popup = null; }
             }
             Rebuild();
         }
@@ -163,11 +199,15 @@ internal sealed class FakeFm : IGame
         {
             Events.Add("escape");
             if (Page == "contract" && EscapeLeavesContract) { Page = "portal"; Events.Add("left the contract screen"); }
-            Popup = null; Editing = false;
+            Popup = null; Editing = false; BoxFocus = false;
         }
         if (key == GameKey.Enter)
         {
-            if (Editing) CommitSalary(FieldText);
+            if (Focused)
+            {
+                CommitSalary(FieldText);
+                if (SalaryMode == "fm27") { Editing = true; BoxFocus = false; Popup = null; }
+            }
             else Events.Add("stray enter");
         }
         Rebuild();
@@ -225,6 +265,8 @@ internal sealed class FakeFm : IGame
     private void Suggest()
     {
         Suggestions++;
+        // The terms redraw with the club's answer: the salary shows as a button again.
+        if (SalaryMode == "fm27") { Editing = false; BoxFocus = false; Popup = null; }
         Events.Add($"suggest {Offer}");
         if (Suggestions > C.Patience)
         {
@@ -338,6 +380,29 @@ internal sealed class FakeFm : IGame
     }
 
     private void BuildJobs()
+    {
+        int pageRoot = -1;
+        if (PortalUnderneath)
+        {
+            var portal = Add(null, 0, 85, 1920, 995); portal.IsScroll = true; portal.Type = "SIScrollView";
+            _parents.Push(portal.Id);
+            Add("Team", 942, 188, 30, 16); Add("Job Security", 1173, 188, 66, 16);
+            for (int i = 0; i < 8; i++)
+            {
+                float y = ListTop + i * RowH;
+                Add("Media", 405, y + 2, 33, 16); Add("08:51", 420, y + 18, 31, 16); // message tags and times, just above the club / league
+                Add(Jobs[i].Team, 967, 212 + i * 52, 60, 17); Add("Available", 1178, 225 + i * 52, 54, 18);
+            }
+            _parents.Pop();
+            var page = Add(null, 0, 85, 1920, 995); page.IsScroll = true; page.Type = "SIScrollView";
+            pageRoot = page.Id;
+            _parents.Push(page.Id);
+        }
+        BuildJobsPage();
+        if (pageRoot >= 0) _parents.Pop();
+    }
+
+    private void BuildJobsPage()
     {
         Add($"{Jobs.Count(j => j.Security == "Available")} Available Jobs", 41, 147, 175, 24);
         bool anyLeft = Jobs.Any(x => x.Security == "Available" && !x.Applied);
@@ -453,17 +518,24 @@ internal sealed class FakeFm : IGame
         Add("Salary", 505, 263, 48, 20);
         if (SalaryMode == "fm27")
         {
-            // Always a type-in box showing the plain number; clicking it focuses it and opens the list.
-            var shown = Editing ? FieldText : Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture);
-            var f = Add(null, 1208, 256, 170, 36, () =>
+            if (!Editing)
             {
-                if (!Editing) { Editing = true; FieldText = Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture); }
-                Popup = Popup == "salary" ? null : "salary"; // clicking the box again closes its list
-            });
-            f.IsField = true; f.Type = "TextField"; f.FieldValue = shown;
-            _parents.Push(f.Id);
-            Add(shown, 1223, 264, 60, 20);
-            _parents.Pop();
+                // A button showing "$725 p/w"; clicking it turns it into a number box (focused) and opens the list.
+                Button($"${Offer.Wage:#,0} p/w", 1208, 256, 170, 36, () =>
+                {
+                    Editing = true; BoxFocus = true; Popup = "salary";
+                    FieldText = Math.Round(Offer.Wage).ToString(CultureInfo.InvariantCulture);
+                });
+            }
+            else
+            {
+                // The number box (not a button): clicking into it focuses it and opens the list again.
+                var f = Add(null, 1208, 256, 170, 36, () => { BoxFocus = true; Popup = "salary"; });
+                f.Clickable = false; f.Type = "SILongField"; f.IsField = true; f.FieldValue = FieldText;
+                _parents.Push(f.Id);
+                Add(FieldText, 1223, 264, 60, 20);
+                _parents.Pop();
+            }
         }
         else if (Editing)
         {
@@ -548,7 +620,8 @@ internal sealed class FakeFm : IGame
                 float y = 300 + i++ * SalaryRowH - SalaryListScroll;
                 if (y < 296 || y + 30 > 296 + SalaryBoxH) continue; // only what fits in the box is drawn
                 double captured = v;
-                Button($"${v:#,0} p/w", 1208, y, 170, 30, () => { SetWage(captured); Popup = null; Editing = false; });
+                var row = Button($"${v:#,0} p/w", 1208, y, 170, 30, () => { SetWage(captured); Popup = null; Editing = false; BoxFocus = false; });
+                row.Type = "DropdownRow";
             }
             _parents.Pop();
         }

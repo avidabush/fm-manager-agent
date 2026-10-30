@@ -90,6 +90,15 @@ internal sealed class ScreenModel
         return false;
     }
 
+    /// <summary>The topmost recorded ancestor (the screen or panel a node belongs to).</summary>
+    public UiNode RootOf(UiNode n)
+    {
+        if (n == null) return null;
+        var cur = n;
+        for (int guard = 0; cur.Parent >= 0 && guard < 500; guard++) cur = this[cur.Parent];
+        return cur;
+    }
+
     /// <summary>All text inside a node, in order.</summary>
     public string TextOf(UiNode n)
     {
@@ -172,6 +181,10 @@ internal interface IGame
     /// <summary>Puts text into a text field directly. False if the field can't be set this way.</summary>
     bool SetField(UiNode field, string text, out string how);
     /// <summary>Types with the keyboard into whatever has focus. False if the game window isn't focused.</summary>
+    /// <summary>True if the keyboard focus is in this field. Keys are only ever sent when it is.</summary>
+    bool FieldFocused(UiNode field);
+    /// <summary>A real click on a harmless spot (closes lists, leaves text boxes).</summary>
+    bool ClickAside(UiNode spot, out string how);
     bool Type(string text, bool selectAllFirst, bool pressEnter);
     bool Key(GameKey key);
     /// <summary>Scrolls a scroll area by roughly this many UI pixels (positive = down).</summary>

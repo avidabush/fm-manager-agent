@@ -83,8 +83,9 @@ internal sealed class UnityGame : IGame
         if (field?.Handle is not VisualElement el) { how = "no field"; return false; }
         try
         {
-            var p = el.GetType().GetProperty("value", BindingFlags.Public | BindingFlags.Instance);
-            if (p == null || !p.CanWrite) { how = "field has no value"; return false; }
+            var target = Reflect.Actual(el);
+            var p = Reflect.Prop(target.GetType(), "value", writable: true);
+            if (p == null) { how = "field has no value (" + target.GetType().Name + ")"; return false; }
             object v = text;
             var pt = p.PropertyType;
             if (pt != typeof(string))
@@ -92,10 +93,10 @@ internal sealed class UnityGame : IGame
                 if (!double.TryParse(text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d)) return false;
                 v = Convert.ChangeType(d, pt, System.Globalization.CultureInfo.InvariantCulture);
             }
-            p.SetValue(el, v);
+            p.SetValue(target, v);
             // Commit like leaving the field.
             Reflect.TryCall(el, "Blur");
-            how = "field value";
+            how = "field value (" + target.GetType().Name + ")";
             Rescan();
             return true;
         }
@@ -104,6 +105,35 @@ internal sealed class UnityGame : IGame
             how = (ex.InnerException ?? ex).Message;
             return false;
         }
+    }
+
+    /// <summary>True if the keyboard focus is in this field (or inside it). False when unsure.</summary>
+    public bool FieldFocused(UiNode field)
+    {
+        if (field?.Handle is not VisualElement el) return false;
+        try
+        {
+            var fc = Reflect.Get(el, "focusController");
+            if (Reflect.Get(fc, "focusedElement") is not Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase focused) return false;
+            var fve = focused as VisualElement ?? Reflect.TryCast(focused, typeof(VisualElement)) as VisualElement;
+            long target = Il2CppUtil.Id(el);
+            for (int guard = 0; fve != null && guard < 40; guard++, fve = fve.parent)
+                if (Il2CppUtil.Id(fve) == target) return true;
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>A real mouse click on a harmless spot (closes open lists and leaves text boxes, like clicking aside).</summary>
+    public bool ClickAside(UiNode spot, out string how)
+    {
+        how = "";
+        if (spot?.Handle is not VisualElement el) { how = "no spot"; return false; }
+        if (!Ui.IsAttached(el)) { how = "spot gone"; return false; }
+        _a.Panel.Uncover(el);
+        var ok = _a.Clicker.TryPress(ClickStrategy.Mouse, el, Ui.RootOf(el), out how);
+        if (ok) Rescan();
+        return ok;
     }
 
     public bool Type(string text, bool selectAllFirst, bool pressEnter)
@@ -208,7 +238,11 @@ internal sealed class UnityGame : IGame
             else if (!scroll) return true;
             if (clickable) n.Click = n.Id;
             n.Enabled = IsEnabled(ve);
-            if (field) n.FieldValue = Reflect.Get(ve, "value")?.ToString() ?? Reflect.Get(ve, "text")?.ToString();
+            if (field)
+            {
+                var real = Reflect.Actual(ve);
+                n.FieldValue = Reflect.Get(real, "value")?.ToString() ?? Reflect.Get(real, "text")?.ToString();
+            }
             if (scroll)
             {
                 var sc = Reflect.Get(ve, "verticalScroller");

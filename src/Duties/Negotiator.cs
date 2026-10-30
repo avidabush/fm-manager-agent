@@ -16,8 +16,6 @@ internal sealed class Negotiator : AgentDuty
     private UiNode _offerBtn;
     private Terms _lastSeen;
     private double? _clubMax;
-    /// <summary>FM27: the salary is always a type-in box (FM26-style screens show it only while you edit).</summary>
-    private bool _fieldAlways;
     /// <summary>The contract length couldn't be changed in these talks: don't keep trying every round.</summary>
     private bool _lengthStuck;
     /// <summary>What the agent is doing right now (for the log and troubleshooting files).</summary>
@@ -163,7 +161,6 @@ internal sealed class Negotiator : AgentDuty
         if (cs == null) { Fail("This isn't a head coach contract screen."); yield break; }
         _club = Or(cs.Club, "the club");
         _handledClub = _club;
-        _fieldAlways = cs.SalaryField != null;
         _lengthStuck = false;
         _savedThisTalk = false;
         _step = "";
@@ -477,101 +474,126 @@ internal sealed class Negotiator : AgentDuty
             .ToList();
     }
 
-    /// <summary>True while the salary is being edited (only meaningful where the box appears just for editing).</summary>
-    private bool Editing(ContractScreen c) => !_fieldAlways && c?.SalaryField != null;
+    /// <summary>The salary list is open (salary amounts that weren't on <paramref name="before"/>).</summary>
+    private bool SalaryListOpen(ScreenModel s, ScreenModel before) => MoneyItems(s, before, Read(s)).Count >= 2;
 
+    /// <summary>
+    /// Sets the salary the way you would. FM27's salary is a button ("$725 p/w") that turns into a number box
+    /// plus a list of amounts when clicked; FM26-style screens have a box or a list. In order:
+    ///   1. the number box's value, set directly;
+    ///   2. typing into the box — only while it has the keyboard focus (keys anywhere else are FM shortcuts:
+    ///      Backspace is "Back", which leaves the negotiation);
+    ///   3. the nearest amount in the list;
+    ///   4. the - / + buttons.
+    /// </summary>
     private IEnumerable<Wait> SetWage(double value, Result r)
     {
         r.Ok = false;
         double tol = Math.Max(1, value * 0.002);
         var digits = Money.Digits(value);
-        var cs = Read();
-        double? start = cs?.Wage;
-        bool Done(ScreenModel s)
+        bool At(ScreenModel s) { var c = Read(s); return c?.Wage != null && Math.Abs(c.Wage.Value - value) <= tol; }
+        double? start = Read()?.Wage;
+        if (At(Game.Screen)) { r.Ok = true; r.Value = value; yield break; }
+        var before = Game.Screen;
+
+        // Click the salary to get its box (and/or list), unless the box is already showing.
+        if (Read()?.SalaryField == null)
         {
-            var c = Read(s);
-            return c != null && !Editing(c) && c.Wage.HasValue && Math.Abs(c.Wage.Value - value) <= tol;
+            var open = new Result();
+            foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => Read(s)?.SalaryField != null || SalaryListOpen(s, before), "the salary", open, 1.5))
+                yield return w;
         }
-        if (Done(Game.Screen)) { r.Ok = true; r.Value = value; yield break; }
 
-        // A. An always-there salary box: set its value directly (committed like leaving the box).
-        if (_fieldAlways && cs?.SalaryField != null && Game.SetField(cs.SalaryField, digits, out _))
-            yield return Wait.Until(Game, Done, 1.0);
-
-        if (!Done(Game.Screen))
+        // 1. Set the box's value.
+        var f = Read()?.SalaryField;
+        if (f != null && Game.SetField(f, digits, out var how))
         {
-            // B. Click the salary: to type into it, or to open its list.
-            var before = Game.Screen;
-            cs = Read();
-            bool opened = Editing(cs);
-            if (!opened)
-            {
-                var open = new Result();
-                foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => { var c = Read(s); return Editing(c) || MoneyItems(s, before, c).Count >= 2; }, "the salary", open, 1.5))
-                    yield return w;
-                opened = open.Ok;
-            }
-            cs = Read();
-            bool listOpen = MoneyItems(Game.Screen, before, cs).Count >= 2;
+            yield return Wait.Until(Game, At, 1.0);
+            AgentLog.Info($"Salary: set the box to {digits} ({how}) → {(At(Game.Screen) ? "ok" : "no change")}.", panel: false);
+        }
 
-            // Keys are only sent right after the box visibly reacted (it's focused), never blind.
-            if (opened && cs?.SalaryField != null)
+        // 2. Type into it, only with the keyboard focus in it.
+        f = Read()?.SalaryField;
+        if (!At(Game.Screen) && f != null)
+        {
+            if (!Game.FieldFocused(f))
             {
-                if (!_fieldAlways && Game.SetField(cs.SalaryField, digits, out _))
-                    yield return Wait.Until(Game, s => Done(s) || !Editing(Read(s)), 1.5);
-                if (!Done(Game.Screen) && (Editing(Read()) || _fieldAlways) && Game.Type(digits, true, true))
-                    yield return Wait.Until(Game, s => Done(s) || (!_fieldAlways && !Editing(Read(s))), 2.5);
-                if (Editing(Read())) { Game.Key(GameKey.Enter); yield return Wait.Fresh(Game, 0.3); }
-            }
-
-            // C. Pick the nearest salary from the list.
-            var items = MoneyItems(Game.Screen, before, Read());
-            if (!Done(Game.Screen) && items.Count >= 2)
-            {
-                var pick = items.OrderBy(i => Math.Abs((Money.Parse(i.Text) ?? 0) - value)).First();
-                var pickKey = ScreenModel.KeyOf(pick);
-                var keys = ScreenModel.Keys(items);
-                var pr = new Result();
-                foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(n => PressTarget(s, n)).FirstOrDefault(),
-                             s => !s.AnyOf(keys), pick.Text, pr, 1.5))
+                var focus = new Result();
+                foreach (var w in PressUntil(s => Read(s)?.SalaryField, s => { var x = Read(s)?.SalaryField; return x != null && Game.FieldFocused(x); }, "the salary box", focus, 1.0))
                     yield return w;
             }
-
-            // Leave no list open behind.
-            if (listOpen || MoneyItems(Game.Screen, before, Read()).Count >= 2)
-                foreach (var w in CloseSalaryList(before, value)) yield return w;
+            f = Read()?.SalaryField;
+            if (f != null && Game.FieldFocused(f) && Game.Type(digits, true, false))
+            {
+                yield return Wait.Until(Game, At, 2.0);
+                AgentLog.Info($"Salary: typed {digits} → {(At(Game.Screen) ? "ok" : "no change")}.", panel: false);
+            }
+            else AgentLog.Info("Salary: the box doesn't have the keyboard focus, so I won't type.", panel: false);
         }
+
+        // 3. The nearest amount in the list.
+        bool exact = At(Game.Screen) || Read()?.SalaryField != null; // an exact number was entered (so a lower result = the game's cap)
+        var items = MoneyItems(Game.Screen, before, Read());
+        if (!At(Game.Screen) && items.Count >= 2)
+        {
+            exact = false;
+            var pick = items.OrderBy(i => Math.Abs((Money.Parse(i.Text) ?? 0) - value)).First();
+            var pickKey = ScreenModel.KeyOf(pick);
+            var keys = ScreenModel.Keys(items);
+            var pr = new Result();
+            foreach (var w in PressUntil(s => s.Texts.Where(n => ScreenModel.KeyOf(n) == pickKey).Select(n => PressTarget(s, n)).FirstOrDefault(),
+                         s => !s.AnyOf(keys), pick.Text, pr, 1.5))
+                yield return w;
+            AgentLog.Info($"Salary: picked {pick.Text} from the list ({(pr.Ok ? pr.How : pr.Error)}).", panel: false);
+        }
+
+        // Leave the box and close the list, so the game takes the new salary.
+        foreach (var w in LeaveSalaryBox(before)) yield return w;
 
         yield return Fresh();
-        cs = Read();
-        if (Done(Game.Screen)) { r.Ok = true; r.Value = value; yield break; }
-        if (cs?.Wage != null && start.HasValue && cs.Wage.Value < value - tol && cs.Wage.Value > start.Value + tol && !Editing(cs))
+        var cs = Read();
+        if (At(Game.Screen)) { r.Ok = true; r.Value = cs.Wage.Value; yield break; }
+        if (exact && cs?.Wage != null && start.HasValue && cs.Wage.Value < value - tol && cs.Wage.Value > start.Value + tol)
         {
-            r.Ok = true; // capped by the game: this is the club's maximum
+            r.Ok = true; // an exact number was capped by the game: this is the club's maximum
             r.Value = cs.Wage.Value;
             yield break;
         }
 
-        // D. The - / + buttons, one press at a time.
+        // 4. The - / + buttons, one press at a time.
         foreach (var w in StepWage(value, r)) yield return w;
+        foreach (var w in LeaveSalaryBox(before)) yield return w;
     }
 
     /// <summary>
-    /// Closes the salary list without Escape (FM27 may treat Escape as "leave this screen"):
-    /// leave the salary box holding <paramref name="keep"/>, or click the salary again.
+    /// Leaves the salary box and closes its list — never with Escape or Backspace (FM27 shortcuts that can
+    /// leave the screen). A click on the "Salary" label, like clicking aside; else Enter, but only while the
+    /// box has the keyboard focus; else clicking the salary again.
     /// </summary>
-    private IEnumerable<Wait> CloseSalaryList(ScreenModel before, double keep)
+    private IEnumerable<Wait> LeaveSalaryBox(ScreenModel before)
     {
-        bool Open(ScreenModel s) => MoneyItems(s, before, Read(s)).Count >= 2;
-        for (int step = 0; step < 2 && Open(Game.Screen); step++)
+        bool Focused(ScreenModel s) { var x = Read(s)?.SalaryField; return x != null && Game.FieldFocused(x); }
+        bool Busy(ScreenModel s) => SalaryListOpen(s, before) || Focused(s);
+        if (!Busy(Game.Screen)) yield break;
+        var label = Read()?.SalaryLabel;
+        if (label != null && Game.ClickAside(label, out _))
         {
-            bool tried;
-            bool viaField = _fieldAlways ? step == 0 : step == 1;
-            if (viaField) { var f = Read()?.SalaryField; tried = f != null && Game.SetField(f, Money.Digits(keep), out _); }
-            else { var o = Read()?.SalaryValue; tried = o != null && Game.Press(o, 0, out _); }
-            if (tried) yield return Wait.Until(Game, x => !Open(x), 1.0);
+            var w = Wait.Until(Game, x => !Busy(x), 1.0);
+            yield return w;
+            if (!w.TimedOut) yield break;
         }
-        if (Open(Game.Screen)) Troubleshoot("the salary list didn't close");
+        if (Focused(Game.Screen) && Game.Key(GameKey.Enter))
+        {
+            var w = Wait.Until(Game, x => !Busy(x), 1.0);
+            yield return w;
+            if (!w.TimedOut) yield break;
+        }
+        if (SalaryListOpen(Game.Screen, before))
+        {
+            var o = Read()?.SalaryValue;
+            if (o != null && Game.Press(o, 0, out _)) yield return Wait.Until(Game, x => !SalaryListOpen(x, before), 1.0);
+        }
+        if (SalaryListOpen(Game.Screen, before)) Troubleshoot("the salary list didn't close");
     }
 
     private IEnumerable<Wait> StepWage(double value, Result r)
@@ -626,20 +648,19 @@ internal sealed class Negotiator : AgentDuty
         if (cs?.SalaryValue == null) { r.Error = "salary not found"; yield break; }
         double original = cs.Wage ?? 0;
         var before = Game.Screen;
-        int ListCount(ScreenModel s) => MoneyItems(s, before, Read(s)).Count;
 
-        // Click the salary: a list of salaries opens (FM27 also focuses its type-in box).
+        // Click the salary: a list of amounts opens (FM27 also turns it into a number box).
         var open = new Result();
-        foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => ListCount(s) >= 2 || Editing(Read(s)), "the salary", open, 1.5))
+        foreach (var w in PressUntil(s => Read(s)?.SalaryValue, s => SalaryListOpen(s, before) || (cs.SalaryField == null && Read(s)?.SalaryField != null), "the salary", open, 1.5))
             yield return w;
-        // The box can react a moment before its list is drawn.
-        if (open.Ok && ListCount(Game.Screen) < 2)
-            yield return Wait.Until(Game, s => ListCount(s) >= 2, 0.8);
+        // The box can appear a moment before its list is drawn.
+        if (open.Ok && !SalaryListOpen(Game.Screen, before))
+            yield return Wait.Until(Game, s => SalaryListOpen(s, before), 0.8);
 
         var items = MoneyItems(Game.Screen, before, Read());
         if (items.Count >= 2)
         {
-            // A list of salaries: its highest entry is the most they can pay.
+            // A list of amounts: its highest is the most they can pay.
             double max = items.Max(i => Money.Parse(i.Text) ?? 0);
             var scroll = ScrollOf(Game.Screen, items[0]);
             if (scroll != null && scroll.CanScroll && scroll.ScrollValue < scroll.ScrollHigh - 1 && Game.Scroll(scroll, 100_000, out _))
@@ -650,21 +671,18 @@ internal sealed class Negotiator : AgentDuty
             }
             r.Value = max;
             r.Ok = max > 0;
-            foreach (var w in CloseSalaryList(before, original)) yield return w;
+            foreach (var w in LeaveSalaryBox(before)) yield return w;
             yield break;
         }
 
-        cs = Read();
-        if (cs?.SalaryField != null && (open.Ok || _fieldAlways))
+        // No list, only a number box: set something huge and see where the game caps it.
+        var f = Read()?.SalaryField;
+        if (f != null)
         {
-            // No list: type something huge and see where the game caps it.
             double huge = Math.Max(9_999_999, Data.Contract.WageTarget * 20);
-            var digits = Money.Digits(huge);
-            bool Changed(ScreenModel s) { var c = Read(s); return c != null && !Editing(c) && c.Wage.HasValue && Math.Abs(c.Wage.Value - original) > 0.5; }
-            if (Game.SetField(cs.SalaryField, digits, out _)) yield return Wait.Until(Game, Changed, 1.5);
-            if (!Changed(Game.Screen) && Editing(Read()) && Game.Type(digits, true, true))
-                yield return Wait.Until(Game, Changed, 2.5);
-            if (Editing(Read())) { Game.Key(GameKey.Enter); yield return Wait.Fresh(Game, 0.3); }
+            bool Changed(ScreenModel s) { var c = Read(s); return c?.Wage != null && Math.Abs(c.Wage.Value - original) > 0.5; }
+            if (Game.SetField(f, Money.Digits(huge), out _)) yield return Wait.Until(Game, Changed, 1.5);
+            foreach (var w in LeaveSalaryBox(before)) yield return w;
             yield return Fresh();
             var shown = Read()?.Wage;
             if (shown.HasValue && shown.Value < huge * 0.5 && Math.Abs(shown.Value - original) > 0.5)
@@ -681,7 +699,11 @@ internal sealed class Negotiator : AgentDuty
                 foreach (var w in SetWage(original, back)) yield return w;
             }
         }
-        else if (!open.Ok) r.Error = "the salary control didn't open";
+        else
+        {
+            r.Error = open.Ok ? "no list of amounts" : "the salary control didn't open";
+            foreach (var w in LeaveSalaryBox(before)) yield return w;
+        }
     }
 
     /// <summary>The scroll area a node sits in (nearest scrollable ancestor).</summary>

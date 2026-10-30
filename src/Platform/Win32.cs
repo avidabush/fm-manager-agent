@@ -245,9 +245,9 @@ internal sealed class KeyboardPlayer
         if (!GameWindow.IsForeground) return false;
         if (selectAll)
         {
+            // Ctrl+A, then the digits replace the selection. Never Backspace: outside a text box it's FM's "Back".
             _q.Enqueue((Win32.VK_CTRL, false)); _q.Enqueue((Win32.VK_A, false));
             _q.Enqueue((Win32.VK_A, true)); _q.Enqueue((Win32.VK_CTRL, true));
-            _q.Enqueue((Win32.VK_BACK, false)); _q.Enqueue((Win32.VK_BACK, true));
         }
         foreach (var ch in text ?? "")
         {

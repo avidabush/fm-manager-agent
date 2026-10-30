@@ -18,6 +18,9 @@ internal sealed class JobHunter : AgentDuty
     public const double IdleBeforeVisit = 8;
 
     private bool _onPage, _passDoneThisVisit, _navigatedByUs, _dumped, _dateWarned;
+    private double _onPageSince;
+    /// <summary>The jobs page must be steady this long before a pass starts (screens flicker while changing).</summary>
+    public const double SettleSeconds = 0.6;
     private string _status = "";
     private string _lastSummary = "";
     private double _navBlockedUntil, _lastRealCheck = double.NegativeInfinity;
@@ -93,13 +96,13 @@ internal sealed class JobHunter : AgentDuty
         Date.Update(s, Game.Now);
 
         bool onPage = JobsPage.IsShowing(s, Text);
-        if (onPage && !_onPage) Arrived();
+        if (onPage && !_onPage) { _onPageSince = Game.Now; Arrived(); }
         if (!onPage && _onPage) { _passDoneThisVisit = false; _navigatedByUs = false; }
         _onPage = onPage;
 
         if (!Enabled || Runner.Active || Host.OtherDutyBusy(this)) return;
 
-        if (onPage && !_passDoneThisVisit)
+        if (onPage && !_passDoneThisVisit && Game.Now - _onPageSince >= SettleSeconds)
         {
             _passDoneThisVisit = true;
             Runner.Start("jobs", Pass(_navigatedByUs));
@@ -217,7 +220,13 @@ internal sealed class JobHunter : AgentDuty
     private IEnumerable<Wait> Pass(bool navigated)
     {
         yield return Fresh();
-        if (!JobsPage.IsShowing(Game.Screen, Text)) { Quit("I'm not on the jobs page any more"); yield break; }
+        if (!JobsPage.IsShowing(Game.Screen, Text))
+        {
+            // The page was only there for a moment (screens changing): not a failure, nothing to report.
+            _status = "On";
+            AgentLog.Info("Job hunting: the jobs page went away before I started.", panel: false);
+            yield break;
+        }
         var inner = ApplyToAll ? ApplyAllPass() : FilteredPass();
         foreach (var w in inner) yield return w;
         foreach (var w in GoBack(navigated)) yield return w;

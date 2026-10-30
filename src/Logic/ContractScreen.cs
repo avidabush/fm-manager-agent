@@ -46,7 +46,7 @@ internal sealed class ContractScreen
             if (txt == "+") { c.Plus ??= s.ClickableOf(n) ?? n; continue; }
             if (c.SalaryValue == null && Money.TryParse(txt, out var m) && txt.Any(char.IsDigit))
             {
-                c.SalaryValue = s.ClickableOf(n) ?? n;
+                c.SalaryValue = s.ClickableOf(n) ?? (c.SalaryField != null && s.IsInside(n, c.SalaryField) ? c.SalaryField : n);
                 c.Wage = m.Value;
                 if (m.Prefix.Length > 0) c.WagePrefix = m.Prefix;
                 if (m.Unit.Length > 0) c.WageUnit = m.Unit;
@@ -92,6 +92,17 @@ internal sealed class ContractScreen
         var about = s.Text(t.AboutClub);
         if (about != null)
             c.Club = s.Texts.Where(n => n.Order > about.Order && n.Text.Trim().Length > 1).OrderBy(n => n.Order).Select(n => n.Text.Trim()).FirstOrDefault() ?? "";
+        if (c.Club.Length == 0)
+        {
+            // FM27: the club card left of the offer — a club badge with the club's name beside it.
+            var offer = s.Text(t.CurrentOffer);
+            var root = s.RootOf(offer);
+            var badge = s.Nodes.Where(n => n.Name == "ClubButton" && n.W >= 40 && n.H >= 40 && n.Right < offer.X && (root == null || s.IsInside(n, root)))
+                .OrderBy(n => n.Y).FirstOrDefault();
+            if (badge != null)
+                c.Club = s.Texts.Where(n => n.X > badge.Right && n.X < badge.Right + 60 && n.Y >= badge.Y - 8 && n.Y < badge.Y + badge.H / 2 && n.Text.Trim().Length > 1)
+                    .OrderBy(n => n.Y).Select(n => n.Text.Trim()).FirstOrDefault() ?? "";
+        }
 
         // --- latest chat line from the chairperson (right column, above the action buttons)
         var action = c.Suggest ?? c.Finalize;

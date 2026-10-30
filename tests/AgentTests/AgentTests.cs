@@ -457,6 +457,34 @@ internal static class AgentTests
         }
         {
             var fm = FakeFm.WithJobs();
+            fm.Page = "portal";
+            fm.Tick();
+            var h = new Host(fm, "jobs-flicker");
+            var jh = new JobHunter(h);
+            h.Duties.Add(jh);
+            h.Data.Jobs.AutoVisit = false;
+            jh.SetEnabled(true);
+            int logBefore = AgentLog.Recent.Count;
+            fm.Page = "jobs"; fm.Tick();
+            h.Run(() => false, 0.2);              // the jobs page shows for a moment while screens change…
+            fm.Page = "portal"; fm.Tick();
+            h.Run(() => false, 2);
+            var said = AgentLog.Recent.Skip(Math.Max(0, logBefore - 1)).Where(l => l.Contains("Job hunting")).ToList();
+            Check("Jobs page only flickers by → no pass, no complaint, nothing paused", fm.Presses == 0 && !said.Any(l => l.Contains("tomorrow") || l.Contains("Stopped")) && !jh.Status.StartsWith("Stopped"),
+                $"presses={fm.Presses} status={jh.Status} {string.Join(" / ", said)}");
+        }
+        {
+            var fm = FakeFm.WithJobs();
+            fm.PortalUnderneath = true;
+            fm.Tick();
+            var rows = JobsPage.Read(fm.Screen, new GameText(), out _, out _, out _, out _);
+            var expected = fm.Jobs.Take(rows.Count).Select(j => j.Team).ToList();
+            Check("Home screen loaded underneath (FM27): reads only the jobs table (no \"Media\" / message times)",
+                rows.Count >= 12 && rows.Select(r => r.Team).SequenceEqual(expected) && rows.All(r => r.League != "08:51" && r.Team != "Media"),
+                string.Join(" ; ", rows.Take(3).Select(r => r.Debug())));
+        }
+        {
+            var fm = FakeFm.WithJobs();
             fm.HeaderShift = 250;
             fm.Tick();
             var rows = JobsPage.Read(fm.Screen, new GameText(), out _, out _, out _, out _);
@@ -568,6 +596,7 @@ internal static class AgentTests
                  {
                      ("as in your screenshots", f => { }),
                      ("its value can't be set directly (types after clicking)", f => f.FieldSettable = false),
+                     ("can't be set and focus can't be checked (no typing at all)", f => { f.FieldSettable = false; f.FocusUnknown = true; }),
                      ("a long list that scrolls", f => f.LongSalaryList = true),
                      ("only real mouse clicks work", f => f.WorkingMethod = 2),
                  })
@@ -581,8 +610,8 @@ internal static class AgentTests
             Check($"FM27 salary box ({label}): club maximum read from the list ($2,100)", n.ClubMax == 2100, $"max={n.ClubMax} list={list.Count} ending {list.Last()}");
             Check($"FM27 salary box ({label}): reaches a deal, list closed, no keys sent blind",
                 n.Choice?.Title == "Deal ready" && fm.Offer.Wage >= 1400 && fm.Offer.Wage <= 1800 && fm.Popup == null && stray.Count == 0,
-                $"{n.Choice?.Title} {fm.Offer} popup={fm.Popup} {string.Join(",", stray)}");
-            Check($"FM27 salary box ({label}): never presses Escape (FM27 may leave the screen on it)", !fm.Events.Contains("escape") && fm.Page == "contract",
+                $"{n.Choice?.Title} {fm.Offer} popup={fm.Popup} {string.Join(",", stray)} || {string.Join(" | ", fm.Events)}");
+            Check($"FM27 salary box ({label}): never presses Escape or types blind (FM27 leaves the screen on those)", !fm.Events.Contains("escape") && fm.Page == "contract",
                 string.Join(" | ", fm.Events.Where(e => e.Contains("escape") || e.Contains("left"))));
         }
         {

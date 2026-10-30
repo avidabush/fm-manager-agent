@@ -70,13 +70,58 @@ internal static class Reflect
     private static readonly Dictionary<string, Type> TypeCache = new();
     private static MethodInfo _tryCast;
 
+    /// <summary>
+    /// A property by name, most-derived declaration first. Interop types re-declare inherited
+    /// properties (e.g. <c>value</c> on every field class), so a plain GetProperty is ambiguous.
+    /// </summary>
+    public static PropertyInfo Prop(Type t, string member, bool writable = false)
+    {
+        for (var cur = t; cur != null; cur = cur.BaseType)
+        {
+            PropertyInfo p;
+            try { p = cur.GetProperty(member, All | BindingFlags.DeclaredOnly); }
+            catch (AmbiguousMatchException) { p = cur.GetProperties(All | BindingFlags.DeclaredOnly).FirstOrDefault(x => x.Name == member && x.GetIndexParameters().Length == 0); }
+            if (p != null && p.GetIndexParameters().Length == 0 && (!writable || p.CanWrite)) return p;
+        }
+        return null;
+    }
+
+    private static readonly Dictionary<IntPtr, Type> ActualTypes = new();
+
+    /// <summary>
+    /// The object as its real interop class (the proxy we hold is often just VisualElement), so members
+    /// declared further down — like a LongField's <c>value</c> — can be reached. Falls back to the object itself.
+    /// </summary>
+    public static object Actual(Il2CppObjectBase obj)
+    {
+        if (obj == null) return null;
+        try
+        {
+            var klass = IL2CPP.il2cpp_object_get_class(obj.Pointer);
+            if (!ActualTypes.TryGetValue(klass, out var type))
+            {
+                type = null;
+                foreach (var name in Il2CppUtil.TypeChain(obj))
+                {
+                    if (name.IndexOf('`') >= 0) continue;
+                    var t = FindType(name);
+                    if (t != null) { type = t; break; }
+                }
+                ActualTypes[klass] = type;
+            }
+            if (type == null || type.IsInstanceOfType(obj)) return obj;
+            return TryCast(obj, type) ?? obj;
+        }
+        catch { return obj; }
+    }
+
     public static object Get(object target, string member)
     {
         if (target == null) return null;
         try
         {
             var t = target.GetType();
-            var p = t.GetProperty(member, All);
+            var p = Prop(t, member);
             if (p != null && p.GetIndexParameters().Length == 0) return p.GetValue(target);
             var f = t.GetField(member, All);
             if (f != null) return f.GetValue(target);
@@ -91,8 +136,8 @@ internal static class Reflect
         if (target == null) return false;
         try
         {
-            var p = target.GetType().GetProperty(member, All);
-            if (p != null && p.CanWrite) { p.SetValue(target, value); return true; }
+            var p = Prop(target.GetType(), member, writable: true);
+            if (p != null) { p.SetValue(target, value); return true; }
             var f = target.GetType().GetField(member, All);
             if (f != null) { f.SetValue(target, value); return true; }
         }
